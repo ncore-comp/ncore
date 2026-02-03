@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Ncore 연차관리</title>
+<title>NCORE 연차관리</title>
 <script src="https://cdn.tailwindcss.com"></script>
 <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/moment.js/2.29.4/moment.min.js"></script>
@@ -48,7 +48,7 @@
         <div class="flex justify-between h-16">
             <div class="flex items-center cursor-pointer" onclick="app.refreshDashboard()">
                 <i class="fa-solid fa-cloud text-indigo-600 text-2xl mr-2"></i>
-                <span class="font-bold text-xl text-gray-900">Ncore 연차관리</span>
+                <span class="font-bold text-xl text-gray-900">NCORE 연차관리</span>
                 <span class="ml-3 text-xs font-bold text-green-600 bg-green-100 px-2 py-1 rounded-full">Work & Refresh</span>
             </div>
             <div class="flex items-center space-x-4" id="nav-info"></div>
@@ -59,7 +59,7 @@
 <main id="app-container" class="pt-24 pb-12 min-h-screen"></main>
 
 <script>
-    // ★★★ [중요] 아까 배포하신 새 URL을 여기에 꼭 넣어주세요! ★★★
+    // ★★★ [중요] ★★★
     const GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwozSW72MUY2tpoCIbB47LoVPMVQtxkZc6Cg6Fgr6nhHgsIITDnfpJ--bq17Ifv1TbQ/exec";
 
     const initialAdmin = { users: [], requests: [] };
@@ -220,7 +220,7 @@
         tryLogin: async () => {
             const id = document.getElementById('login-id').value;
             const pw = document.getElementById('login-pw').value;
-            if(!id || !pw) return alert("아이디/비번을 입력하세요.");
+            if(!id || !pw) return alert("아이디/비밀번호를 입력하세요.");
 
             document.getElementById('loading-text').innerText = "로그인 중...";
             document.getElementById('loading-overlay').style.display = 'flex';
@@ -240,7 +240,7 @@
                     document.getElementById('app-container').innerHTML = ""; 
                     app.refreshDashboard();
                 } else {
-                    alert(json.message || "아이디/비번 확인");
+                    alert(json.message || "아이디/비밀번호 확인");
                 }
             } catch(e) { alert("서버 통신 오류"); } finally { document.getElementById('loading-overlay').style.display = 'none'; }
         },
@@ -346,7 +346,7 @@
 
             if (emailList.length > 0) {
                 const recipients = emailList.join(';'); 
-                const subject = `[Ncore 연차관리] 연차 신청 건이 일괄 ${msg}되었습니다.`;
+                const subject = `[NCORE 연차관리] 연차 신청 건이 일괄 ${msg}되었습니다.`;
                 const body = `안녕하세요,\n\n아래 대상자의 연차 내역이 관리자에 의해 일괄 [${msg}] 처리되었습니다.\n\n접속주소: https://ncore-comp.github.io/ncore/`;
                 openOutlookDraft(recipients, subject, body);
                 alert(`총 ${targets.length}건 처리 완료.\n아웃룩 창이 뜨면 [보내기]를 눌러주세요.`);
@@ -452,7 +452,7 @@
                 if(targetEmail) {
                     const userRank = app.currentUser.rank || '';
                     const subject = `[연차신청] ${app.currentUser.name} ${userRank} - ${type}`;
-                    const body = `연차신청이 왔습니다. 확인부탁드립니다.\n\n접속주소: https://ncore-comp.github.io/ncore/\n\n[신청 내용]\n- 이름: ${app.currentUser.name} ${userRank}\n- 종류: ${type}\n- 기간: ${sDate} ~ ${eDate} ${timeRange ? '('+timeRange+')' : ''}\n- 사유: ${reason}`;
+                    const body = `연차가 신청 되었습니다. 확인부탁드립니다.\n\n접속주소: https://ncore-comp.github.io/ncore/\n\n[신청 내용]\n- 이름: ${app.currentUser.name} ${userRank}\n- 종류: ${type}\n- 기간: ${sDate} ~ ${eDate} ${timeRange ? '('+timeRange+')' : ''}\n- 사유: ${reason}`;
                     openOutlookDraft(targetEmail, subject, body);
                     alert('데이터 저장 완료. 아웃룩 창이 뜨면 [보내기]를 눌러주세요.');
                 } else {
@@ -712,4 +712,5 @@
     app.init();
 </script>
 </body>
+
 </html>
