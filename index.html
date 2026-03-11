@@ -1,0 +1,308 @@
+﻿<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NCORE 연차관리</title>
+
+    <link rel="preconnect" href="https://cdn.tailwindcss.com">
+    <link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
+    <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://cdn.jsdelivr.net/gh/sunn-us/SUIT/fonts/static/woff2/SUIT.css" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;700;900&display=swap" rel="stylesheet">
+
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/moment.js/2.29.4/moment.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/moment.js/2.29.4/locale/ko.min.js"></script>
+
+    <style>
+        :root {
+            --bg: #f2f5fa;
+            --bg-soft: #eaf0f9;
+            --surface: #ffffff;
+            --line: #d7e0ec;
+            --text: #0f172a;
+            --muted: #637189;
+            --accent: #2f6cf6;
+            --accent-strong: #1e53d9;
+            --accent-soft: #e9f1ff;
+            --danger: #e04b57;
+        }
+
+        * { box-sizing: border-box; }
+
+        body {
+            font-family: 'SUIT', 'Noto Sans KR', sans-serif;
+            color: var(--text);
+            background: linear-gradient(180deg, #f8fafd 0%, var(--bg) 45%, #eff3fa 100%) !important;
+            letter-spacing: -0.01em;
+        }
+
+        body::before,
+        body::after {
+            content: "";
+            position: fixed;
+            pointer-events: none;
+            z-index: 0;
+            filter: blur(20px);
+        }
+
+        body::before {
+            width: 420px;
+            height: 420px;
+            top: -120px;
+            left: -120px;
+            background: radial-gradient(circle, rgba(99, 146, 255, 0.20) 0%, rgba(99, 146, 255, 0) 70%);
+        }
+
+        body::after {
+            width: 380px;
+            height: 380px;
+            right: -120px;
+            bottom: 100px;
+            background: radial-gradient(circle, rgba(52, 98, 201, 0.14) 0%, rgba(52, 98, 201, 0) 72%);
+        }
+
+        main, nav, footer { position: relative; z-index: 1; }
+
+        .fade-in { animation: riseIn 0.42s ease-out both; }
+        @keyframes riseIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+
+        nav {
+            background: rgba(255, 255, 255, 0.82) !important;
+            border-bottom: 1px solid var(--line);
+            backdrop-filter: blur(16px) saturate(150%);
+            box-shadow: 0 18px 38px -30px rgba(25, 43, 77, 0.55);
+        }
+
+        footer {
+            background: transparent !important;
+            border-top: 1px solid rgba(141, 156, 181, 0.32) !important;
+        }
+
+        button {
+            transition: all 0.2s ease;
+            letter-spacing: -0.01em;
+        }
+        button:active { transform: translateY(1px); }
+        button:disabled { filter: saturate(0.7); }
+
+        input, select, textarea {
+            border-color: var(--line) !important;
+            background-color: #f8fbff !important;
+            color: var(--text) !important;
+        }
+
+        input:focus, select:focus, textarea:focus {
+            outline: none !important;
+            border-color: #b7ccf8 !important;
+            box-shadow: 0 0 0 3px rgba(47, 108, 246, 0.12);
+        }
+
+        .bg-white { background-color: var(--surface) !important; }
+        .bg-gray-50 { background-color: #f7f9fd !important; }
+        .bg-gray-100 { background-color: #edf2f9 !important; }
+        .text-gray-900, .text-gray-800 { color: var(--text) !important; }
+        .text-gray-600, .text-gray-500, .text-gray-400 { color: var(--muted) !important; }
+        .border, .border-gray-100, .border-gray-200, .border-gray-300 { border-color: var(--line) !important; }
+        .shadow-sm { box-shadow: 0 8px 24px -18px rgba(24, 36, 61, 0.34) !important; }
+        .shadow-md { box-shadow: 0 16px 34px -22px rgba(22, 36, 66, 0.34) !important; }
+        .shadow-xl { box-shadow: 0 28px 48px -28px rgba(19, 34, 62, 0.42) !important; }
+        .rounded-2xl { border-radius: 22px !important; }
+        .rounded-xl { border-radius: 16px !important; }
+        .rounded-lg { border-radius: 12px !important; }
+
+        .bg-indigo-600 { background-color: var(--accent) !important; }
+        .bg-indigo-700, .hover\:bg-indigo-700:hover { background-color: var(--accent-strong) !important; }
+        .bg-indigo-50 { background-color: var(--accent-soft) !important; }
+        .text-indigo-800, .text-indigo-700, .text-indigo-600, .text-indigo-500 { color: var(--accent) !important; }
+        .border-indigo-100, .border-indigo-200 { border-color: #bfd3ff !important; }
+
+        .bg-red-600 { background-color: var(--danger) !important; }
+        .hover\:bg-red-700:hover { background-color: #c53d49 !important; }
+
+        .text-green-600 { color: #1d7a59 !important; }
+        .bg-green-100 { background-color: #e8f6f0 !important; }
+
+        .calendar-grid {
+            display: grid;
+            grid-template-columns: repeat(7, 1fr);
+            gap: 1px;
+            background-color: #d7e0ec;
+        }
+        .calendar-cell {
+            background: linear-gradient(180deg, #ffffff 0%, #fbfdff 100%);
+            min-height: 146px;
+            padding: 4px;
+            position: relative;
+        }
+        .calendar-cell-today {
+            background: linear-gradient(180deg, #f8fbff 0%, #eef5ff 100%) !important;
+            box-shadow: inset 0 0 0 1px rgba(101, 142, 232, 0.26);
+        }
+        .calendar-cell-selected {
+            background: linear-gradient(180deg, #fff7f9 0%, #ffeef2 100%) !important;
+            box-shadow: inset 0 0 0 1px rgba(232, 143, 165, 0.42);
+        }
+        .calendar-header-cell {
+            background-color: #f3f7fd;
+            padding: 12px;
+            text-align: center;
+            font-weight: 700;
+            color: #44536b;
+            font-size: 0.95rem;
+        }
+        .holiday-text { color: #e54e57 !important; }
+        .sat-text { color: #3a6bd6 !important; }
+
+        #loading-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(242, 247, 255, 0.88);
+            backdrop-filter: blur(8px);
+            z-index: 9999;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            flex-direction: column;
+        }
+        #loading-text {
+            white-space: pre-line;
+            text-align: center;
+        }
+
+        .today-circle {
+            background-color: var(--accent);
+            color: white;
+            border-radius: 50%;
+            width: 24px;
+            height: 24px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .custom-scrollbar::-webkit-scrollbar { width: 6px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background-color: #c6d2e6; border-radius: 8px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background-color: transparent; }
+
+        .member-card-selected {
+            background: linear-gradient(140deg, #2f6cf6 0%, #1f57dd 100%) !important;
+            border-color: #1d4fd0 !important;
+            box-shadow: 0 18px 32px -20px rgba(30, 83, 217, 0.7) !important;
+        }
+        .member-card-selected .text-gray-800,
+        .member-card-selected .text-gray-500,
+        .member-card-selected .text-gray-400,
+        .member-card-selected .text-indigo-600 {
+            color: #ffffff !important;
+        }
+        .member-card-selected .bg-green-50 {
+            background-color: rgba(255, 255, 255, 0.2) !important;
+        }
+        .member-card-selected .text-green-600 {
+            color: #ffffff !important;
+        }
+        .member-card-absent {
+            background: linear-gradient(180deg, #fff8fa 0%, #fdf0f3 100%) !important;
+            border-color: #efccd5 !important;
+        }
+        .member-card-absent:not(.member-card-selected) {
+            opacity: 0.68;
+        }
+        .member-absence-badge {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+            padding: 3px 8px;
+            border-radius: 9999px;
+            background: #ef9aad;
+            color: #ffffff;
+            font-size: 10px;
+            font-weight: 700;
+            letter-spacing: -0.01em;
+            line-height: 1.1;
+            white-space: nowrap;
+        }
+
+        #custom-tooltip {
+            position: fixed;
+            background: rgba(255, 255, 255, 0.96);
+            border: 1px solid var(--line);
+            border-radius: 12px;
+            padding: 12px;
+            box-shadow: 0 18px 35px -22px rgba(20, 36, 62, 0.46);
+            z-index: 10000;
+            pointer-events: none;
+            display: none;
+            min-width: 280px;
+            max-width: 420px;
+            font-size: 0.85rem;
+            backdrop-filter: blur(8px);
+        }
+    </style>
+    <script>
+        window.onerror = function(msg, url, line) {
+            console.log("오류 감지: " + msg);
+            if(document.getElementById('loading-overlay')) document.getElementById('loading-overlay').style.display = 'none';
+            return false;
+        };
+    </script>
+</head>
+<body class="text-gray-800 min-h-screen flex flex-col antialiased">
+
+    <div id="loading-overlay">
+        <div class="animate-spin rounded-full h-16 w-16 border-t-4 border-indigo-600 mb-4"></div>
+        <p class="text-indigo-800 font-bold text-xl" id="loading-text">NCORE 서버 연결 중...</p>
+        <p class="hidden mt-2 text-xs font-medium text-indigo-400" id="loading-subtext">(최대 15초)</p>
+    </div>
+
+    <div id="custom-tooltip"></div>
+
+    <nav class="fixed w-full z-50 top-0">
+        <div class="max-w-7xl mx-auto px-6">
+            <div class="flex justify-between h-16">
+                <div class="flex items-center cursor-pointer" onclick="app.refreshDashboard()">
+                    <i class="fa-solid fa-calendar-check text-indigo-600 text-2xl mr-2"></i>
+                    <span class="font-bold text-xl text-gray-900">NCORE 연차관리</span>
+                    <span class="ml-3 text-xs font-bold text-green-600 bg-green-100 px-2 py-1 rounded-full">Work & Refresh</span>
+                </div>
+                <div class="flex items-center space-x-4" id="nav-info"></div>
+            </div>
+        </div>
+    </nav>
+
+    <main id="app-container" class="flex-1 w-full pt-24 pb-12"></main>
+
+    <footer class="py-8 text-center mt-auto">
+        <p class="text-xs text-gray-400">Designed & Developed by <span class="font-bold text-gray-500">NCORE</span></p>
+        <p class="text-[10px] text-gray-300 mt-1">Copyright © 2026 NCORE. All rights reserved.</p>
+    </footer>
+
+<script src="./js/core_logic_new_design_v51_codex.js"></script>
+<script src="./js/ui_logic_new_design_v51_codex.js"></script>
+</body>
+</html>
+
+
+
+
+
+
+
+
+
+
+
+
+
