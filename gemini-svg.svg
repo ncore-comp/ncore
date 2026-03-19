@@ -1,0 +1,69 @@
+<svg width="800" height="800" viewBox="0 0 800 800" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <style>
+    .container { fill: #F1F5F9; stroke: #CBD5E1; stroke-width: 1; rx: 15; }
+    .card { fill: #FFFFFF; stroke: #64748B; stroke-width: 1; rx: 8; }
+    .text { fill: #1E293B; font-family: 'Pretendard', 'Malgun Gothic', sans-serif; font-size: 14px; font-weight: 600; text-anchor: middle; dominant-baseline: middle; }
+  </style>
+  <rect x="20" y="40" width="150" height="340" class="container" />
+  <g transform="translate(190, 40)">
+    <rect width="130" height="340" class="container" />
+    <g transform="translate(15, 20)">
+      <rect x="0" y="0" width="45" height="70" class="card" /><text x="22.5" y="35" class="text">&#xAE40;&#xB3C4;&#xD615;</text>
+      <rect x="55" y="0" width="45" height="70" class="card" /><text x="77.5" y="35" class="text">&#xAD8C;&#xC7AC;&#xD64D;</text>
+      <rect x="0" y="115" width="45" height="70" class="card" /><text x="22.5" y="150" class="text">&#xC774;&#xC7AC;&#xC6A9;</text>
+      <rect x="55" y="115" width="45" height="70" class="card" /><text x="77.5" y="150" class="text">&#xCD5C;&#xD61C;&#xB9AC;</text>
+      <rect x="0" y="230" width="45" height="70" class="card" /><text x="22.5" y="265" class="text">&#xC774;&#xC6B0;&#xC11D;</text>
+      <rect x="55" y="230" width="45" height="70" class="card" /><text x="77.5" y="265" class="text">&#xACE0;&#xB2E4;&#xD604;</text>
+    </g>
+  </g>
+  <g transform="translate(340, 40)">
+    <rect width="205" height="340" class="container" />
+    <g transform="translate(15, 20)">
+      <rect x="0" y="0" width="45" height="70" class="card" /><text x="22.5" y="35" class="text">&#xD669;&#xC18C;&#xC5F0;</text>
+      <rect x="0" y="80" width="45" height="70" class="card" /><text x="22.5" y="115" class="text">&#xC774;&#xB3D9;&#xC9C4;</text>
+      <rect x="0" y="160" width="45" height="70" class="card" /><text x="22.5" y="195" class="text">&#xAD8C;&#xC724;&#xD76C;</text>
+      <rect x="0" y="240" width="45" height="70" class="card" /><text x="22.5" y="275" class="text">&#xBC15;&#xC11C;&#xC9C4;</text>
+      <rect x="55" y="0" width="45" height="70" class="card" /><text x="77.5" y="35" class="text">&#xCD5C;&#xC9C4;</text>
+      <rect x="55" y="80" width="45" height="70" class="card" /><text x="77.5" y="115" class="text">&#xC1A1;&#xD604;&#xC12D;</text>
+      <rect x="55" y="160" width="45" height="70" class="card" /><text x="77.5" y="195" class="text">&#xD669;&#xC9C0;&#xC601;</text>
+      <rect x="55" y="240" width="45" height="70" class="card" /><text x="77.5" y="275" class="text">&#xC784;&#xC0AC;&#xC5B8;</text>
+      <rect x="130" y="0" width="45" height="70" class="card" /><text x="152.5" y="35" class="text">&#xAE40;&#xAE30;&#xBBFC;</text>
+      <rect x="130" y="80" width="45" height="70" class="card" /><text x="152.5" y="115" class="text">&#xAE38;&#xBA85;&#xC120;</text>
+    </g>
+  </g>
+  <rect x="560" y="40" width="150" height="340" class="container" />
+  <g transform="translate(20, 430)">
+    <rect width="130" height="340" class="container" />
+    <g transform="translate(15, 20)">
+      <rect x="0" y="0" width="45" height="70" class="card" /><text x="22.5" y="35" class="text">&#xC9C0;&#xD61C;&#xC740;</text>
+      <rect x="55" y="0" width="45" height="70" class="card" /><text x="77.5" y="35" class="text">&#xAE40;&#xD6A8;&#xCC3D;</text>
+      <rect x="0" y="115" width="45" height="70" class="card" /><text x="22.5" y="150" class="text">&#xAE40;&#xC9C0;&#xD604;</text>
+      <rect x="55" y="115" width="45" height="70" class="card" /><text x="77.5" y="150" class="text">&#xAE40;&#xC720;&#xC9C4;</text>
+      <rect x="0" y="230" width="45" height="70" class="card" /><text x="22.5" y="265" class="text">&#xBC15;&#xC9C4;&#xD615;</text>
+      <rect x="55" y="230" width="45" height="70" class="card" /><text x="77.5" y="265" class="text">&#xAE40;&#xD76C;&#xC815;</text>
+    </g>
+  </g>
+  <g transform="translate(190, 430)">
+    <rect width="130" height="340" class="container" />
+    <g transform="translate(15, 20)">
+      <rect x="0" y="0" width="45" height="70" class="card" /><text x="22.5" y="35" class="text">&#xC11C;&#xACBD;&#xC8FC;</text>
+      <rect x="55" y="0" width="45" height="70" class="card" /><text x="77.5" y="35" class="text">&#xC11D;&#xB2E4;&#xD76C;</text>
+      <rect x="0" y="115" width="45" height="70" class="card" /><text x="22.5" y="150" class="text">&#xC774;&#xC120;&#xC9C4;</text>
+      <rect x="55" y="115" width="45" height="70" class="card" /><text x="77.5" y="150" class="text">&#xCD5C;&#xC138;&#xB85D;</text>
+      <rect x="0" y="230" width="45" height="70" class="card" /><text x="22.5" y="265" class="text">&#xAE40;&#xC740;&#xC9C0;</text>
+      <rect x="55" y="230" width="45" height="70" class="card" /><text x="77.5" y="265" class="text">&#xC815;&#xC218;&#xC9C4;</text>
+    </g>
+  </g>
+  <g transform="translate(340, 430)">
+    <rect width="130" height="340" class="container" />
+    <g transform="translate(15, 20)">
+      <rect x="0" y="0" width="45" height="70" class="card" /><text x="22.5" y="35" class="text">&#xC774;&#xC9C0;&#xC778;</text>
+      <rect x="55" y="0" width="45" height="70" class="card" /><text x="77.5" y="35" class="text">&#xBC15;&#xCC44;&#xC6D0;</text>
+      <rect x="0" y="115" width="45" height="70" class="card" /><text x="22.5" y="150" class="text">&#xD5C8;&#xC724;&#xBBF8;</text>
+      <rect x="55" y="115" width="45" height="70" class="card" /><text x="77.5" y="150" class="text">&#xC774;&#xC815;&#xD61C;</text>
+      <rect x="0" y="230" width="45" height="70" class="card" /><text x="22.5" y="265" class="text">&#xC548;&#xC5EC;&#xB780;</text>
+      <rect x="55" y="230" width="45" height="70" class="card" /><text x="77.5" y="265" class="text">&#xCD5C;&#xC740;&#xC9C0;</text>
+    </g>
+  </g>
+  <rect x="560" y="430" width="150" height="340" class="container" />
+</svg>

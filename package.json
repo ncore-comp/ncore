@@ -1,0 +1,14 @@
+{
+  "name": "ncore-main",
+  "private": true,
+  "version": "1.0.0",
+  "scripts": {
+    "import:firestore": "node scripts/import-firestore.js",
+    "compare:firestore": "node scripts/compare-firestore.js",
+    "test:firestore-e2e": "node scripts/firestore-e2e-test.js"
+  },
+  "dependencies": {
+    "firebase-admin": "^13.4.0",
+    "xlsx": "^0.18.5"
+  }
+}
