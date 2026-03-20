@@ -1,0 +1,60 @@
+{
+  "functions": {
+    "source": "functions"
+  },
+  "firestore": {
+    "rules": "firestore.rules"
+  },
+  "hosting": [
+    {
+      "target": "primary",
+      "public": ".",
+      "ignore": [
+        "firebase.json",
+        ".firebaserc",
+        "**/.*",
+        "**/node_modules/**",
+        "functions/**",
+        "scripts/**",
+        "package.json",
+        "package-lock.json",
+        "gs/**"
+      ],
+      "rewrites": [
+        {
+          "source": "/api",
+          "function": {
+            "functionId": "api",
+            "region": "asia-northeast3"
+          }
+        }
+      ],
+      "cleanUrls": true
+    },
+    {
+      "target": "short",
+      "public": ".",
+      "ignore": [
+        "firebase.json",
+        ".firebaserc",
+        "**/.*",
+        "**/node_modules/**",
+        "functions/**",
+        "scripts/**",
+        "package.json",
+        "package-lock.json",
+        "gs/**"
+      ],
+      "rewrites": [
+        {
+          "source": "/api",
+          "function": {
+            "functionId": "api",
+            "region": "asia-northeast3"
+          }
+        }
+      ],
+      "cleanUrls": true
+    }
+  ]
+}
