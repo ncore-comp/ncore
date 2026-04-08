@@ -2,25 +2,20 @@ const fs = require("fs");
 const path = require("path");
 const XLSX = require("xlsx");
 const admin = require("firebase-admin");
+const { createPasswordRecord } = require("../functions/src/lib/password");
 
 const ROOT_DIR = path.resolve(__dirname, "..", "..");
 const PROJECT_DIR = path.resolve(__dirname, "..");
-const EXCEL_PATH = path.join(ROOT_DIR, "Ncore_DB.xlsx");
 
-function findServiceAccountPath() {
-  const files = fs.readdirSync(ROOT_DIR);
-  const match = files.find(
-    (name) =>
-      name.startsWith("ncore-vacation-system-firebase-adminsdk-") &&
-      name.endsWith(".json")
-  );
-
-  if (!match) {
-    throw new Error("Firebase 서비스 계정 JSON 파일을 찾지 못했습니다.");
+function findExcelPath() {
+  for (const dir of [PROJECT_DIR, ROOT_DIR]) {
+    const candidate = path.join(dir, "Ncore_DB.xlsx");
+    if (fs.existsSync(candidate)) return candidate;
   }
-
-  return path.join(ROOT_DIR, match);
+  throw new Error("엑셀 백업 파일을 찾지 못했습니다.");
 }
+
+const EXCEL_PATH = findExcelPath();
 
 function findServiceAccountPath() {
   for (const dir of [PROJECT_DIR, ROOT_DIR]) {
@@ -33,7 +28,7 @@ function findServiceAccountPath() {
     if (match) return path.join(dir, match);
   }
 
-  throw new Error("Firebase ?쒕퉬??怨꾩젙 JSON ?뚯씪??李얠? 紐삵뻽?듬땲??");
+  throw new Error("Firebase 서비스 계정 JSON 파일을 찾지 못했습니다.");
 }
 
 function loadWorkbook() {
@@ -135,12 +130,14 @@ function normalizeRole(value) {
 }
 
 function normalizeUser(row) {
+  const passwordRecord = createPasswordRecord(cleanText(row.password || "0"));
   return {
     id: cleanText(row.id),
     loginId: cleanText(row.id),
-    password: cleanText(row.password || "0"),
-    passwordHash: cleanText(row.passwordHash),
-    passwordSalt: cleanText(row.passwordSalt),
+    password: "",
+    passwordAlgo: cleanText(row.passwordAlgo || passwordRecord.passwordAlgo),
+    passwordHash: cleanText(row.passwordHash || passwordRecord.passwordHash),
+    passwordSalt: cleanText(row.passwordSalt || passwordRecord.passwordSalt),
     name: cleanText(row.name),
     role: normalizeRole(row.role),
     rank: cleanText(row.rank),

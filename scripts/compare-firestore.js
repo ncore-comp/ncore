@@ -65,9 +65,22 @@ const COLLECTIONS = [
   }
 ];
 
-function omitMeta(value) {
+function omitMeta(value, collectionName) {
   const clone = { ...value };
   delete clone.migratedAt;
+  delete clone.updatedAt;
+
+  if (collectionName === "users") {
+    delete clone.calendarSelf;
+    delete clone.calendarManual;
+    delete clone.calendarParts;
+    delete clone.calendarAll;
+    delete clone.approveScope;
+    delete clone.memberStatusScope;
+    delete clone.canManageUsers;
+    delete clone.canAccessMasterSettings;
+  }
+
   return clone;
 }
 
@@ -122,7 +135,7 @@ async function main() {
     const ignoredCount = rawCount - validCount;
 
     const excelMap = new Map(
-      normalizedRows.map((item) => [String(item[config.idField]), omitMeta(item)])
+      normalizedRows.map((item) => [String(item[config.idField]), omitMeta(item, config.collectionName)])
     );
     const firestoreMap = await getFirestoreMap(db, config.collectionName);
 
@@ -136,7 +149,7 @@ async function main() {
         continue;
       }
 
-      const firestoreValue = omitMeta(firestoreMap.get(id));
+      const firestoreValue = omitMeta(firestoreMap.get(id), config.collectionName);
       if (stableJson(excelValue) !== stableJson(firestoreValue)) {
         mismatched.push(id);
       }

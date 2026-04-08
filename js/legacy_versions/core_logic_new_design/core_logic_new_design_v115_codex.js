@@ -20,6 +20,10 @@ const SCRIPT_REQUEST_TIMEOUT_MS = 15000;
         requests: [],
         boardPosts: [],
         holidays: {},
+        accessLogs: [],
+        securityLogs: [],
+        manualHolidays: [],
+        holidaySummary: { auto: 0, companyFixed: 0, manual: 0 },
         specialLeaveTypes: [],
         userSpecialLeaves: [],
         mailRoutes: [],
@@ -28,7 +32,9 @@ const SCRIPT_REQUEST_TIMEOUT_MS = 15000;
             scopedLoadSupported: false,
             lastLoadScope: 'all',
             requestsLoaded: false,
-            requestDataVersion: 0
+            requestDataVersion: 0,
+            boardPostsLoaded: false,
+            situationBoardLoaded: false
         }
     };
 
@@ -40,10 +46,25 @@ const SCRIPT_REQUEST_TIMEOUT_MS = 15000;
             calendarManual: false,
             calendarParts: false,
             calendarAll: false,
+            calendarRejected: false,
+            calendarWorkReport: false,
+            workReportViewManual: false,
+            workReportViewParts: false,
+            workReportViewAll: false,
             approveScope: 'none',
             memberStatusScope: 'none',
             canAccessMasterSettings: false,
-            canManageUsers: false
+            canManageUsers: false,
+            canAccessMasterSettingsDesktop: false,
+            canManageUsersDesktop: false,
+            canAccessMasterSettingsMobile: false,
+            canManageUsersMobile: false,
+            canAccessAdminOps: false,
+            canAccessAdminOpsDesktop: false,
+            canAccessAdminOpsMobile: false,
+            canAccessSituationBoard: false,
+            canAccessSituationBoardDesktop: false,
+            canAccessSituationBoardMobile: false
         }),
         cleanText: (value) => String(value ?? '').replace(/[<>"'`\\]/g, '').replace(/[\r\n\t]/g, ' ').trim(),
         cleanMultiline: (value) => String(value ?? '').replace(/[<>"'`\\]/g, '').replace(/\r/g, '').trim(),
@@ -58,7 +79,7 @@ const SCRIPT_REQUEST_TIMEOUT_MS = 15000;
             if (raw === 'partleader' || raw === 'part_leader' || raw === '파트리더' || raw === '파트장') return 'part_leader';
             return 'employee';
         },
-        normalizeStatus: (value) => ['pending', 'approved', 'rejected', 'cancel_requested', 'cancelled'].includes(value) ? value : 'pending',
+        normalizeStatus: (value) => ['pending', 'approved', 'rejected', 'cancel_requested', 'cancelled', 'reported'].includes(value) ? value : 'pending',
         normalizeBoardCategory: (value) => ['\uACF5\uC9C0', '\uC77C\uBC18', '\uC5C5\uBB34\uACF5\uC720', '\uC9C8\uBB38'].includes(String(value ?? '').trim()) ? String(value ?? '').trim() : '\uC77C\uBC18',
         normalizeBoardStatus: (value) => ['active', 'deleted'].includes(String(value ?? '').trim()) ? String(value ?? '').trim() : 'active',
         normalizeBool: (value, fallback = false) => {
@@ -88,7 +109,7 @@ const SCRIPT_REQUEST_TIMEOUT_MS = 15000;
             if (raw === '\uBC18\uCC28') return '\uBC18\uCC28(\uC624\uD6C4)';
             if (['\uBC18\uCC28(\uC624\uC804)', '\uBC18\uCC28 (4\uC2DC\uAC04/\uC624\uC804)', '\uBC18\uCC28(4\uC2DC\uAC04/\uC624\uC804)', '\uC624\uC804 \uBC18\uCC28'].includes(raw)) return '\uBC18\uCC28(\uC624\uC804)';
             if (['\uBC18\uCC28(\uC624\uD6C4)', '\uBC18\uCC28 (4\uC2DC\uAC04/\uC624\uD6C4)', '\uBC18\uCC28(4\uC2DC\uAC04/\uC624\uD6C4)', '\uC624\uD6C4 \uBC18\uCC28'].includes(raw)) return '\uBC18\uCC28(\uC624\uD6C4)';
-            return ['\uC5F0\uCC28', '\uBC18\uCC28(\uC624\uC804)', '\uBC18\uCC28(\uC624\uD6C4)', '\uC2DC\uAC04\uCC28(\uD1F4\uADFC)', '\uC2DC\uAC04\uCC28(\uC678\uCD9C)'].includes(raw) ? raw : '\uC5F0\uCC28';
+            return ['\uC5F0\uCC28', '\uBC18\uCC28(\uC624\uC804)', '\uBC18\uCC28(\uC624\uD6C4)', '\uC2DC\uAC04\uCC28(\uD1F4\uADFC)', '\uC2DC\uAC04\uCC28(\uC678\uCD9C)', '\uC794\uC5C5', '\uD2B9\uADFC'].includes(raw) ? raw : '\uC5F0\uCC28';
         },
         normalizeNumber: (value, fallback = 0) => {
             const num = Number(value);
@@ -130,6 +151,37 @@ const SCRIPT_REQUEST_TIMEOUT_MS = 15000;
             if (excelParsed && excelParsed.isValid()) return excelParsed.format('YYYY-MM-DD HH:mm:ss');
             return moment().format('YYYY-MM-DD HH:mm:ss');
         },
+        normalizeLogSortTimestamp: (value, fallback = 0) => {
+            const num = Number(value);
+            if (Number.isFinite(num)) {
+                if (num > 100000000000) return Math.round(num);
+                if (num > 30000) {
+                    const excelMoment = security.excelSerialToMoment(num);
+                    if (excelMoment && excelMoment.isValid()) return excelMoment.valueOf();
+                }
+            }
+            const raw = String(value ?? '').trim();
+            if (!raw) return fallback;
+            const parsed = moment(raw, ['YYYY-MM-DD HH:mm:ss', moment.ISO_8601], true);
+            if (parsed.isValid()) return parsed.valueOf();
+            const excelParsed = security.excelSerialToMoment(raw);
+            if (excelParsed && excelParsed.isValid()) return excelParsed.valueOf();
+            return fallback;
+        },
+        formatAccessLogTimestamp: (value) => {
+            const raw = String(value ?? '').trim();
+            if (!raw) return '-';
+            const parsed = moment(raw, ['YYYY-MM-DD HH:mm:ss', moment.ISO_8601], true);
+            if (parsed.isValid()) return parsed.format('YYYY-MM-DD HH:mm:ss');
+            const excelParsed = security.excelSerialToMoment(raw);
+            if (excelParsed && excelParsed.isValid()) return excelParsed.format('YYYY-MM-DD HH:mm:ss');
+            if (raw === 'PASSWORD_CHANGE_AUTH_REQUIRED') return '로그인 상태를 다시 확인해 주세요.';
+            if (raw === 'CURRENT_PASSWORD_REQUIRED') return '현재 비밀번호를 입력해 주세요.';
+            if (raw === 'CURRENT_PASSWORD_INVALID') return '현재 비밀번호가 올바르지 않습니다.';
+            if (raw === 'NEW_PASSWORD_REQUIRED') return '새 비밀번호를 입력해 주세요.';
+            if (raw === 'PASSWORD_TOO_SHORT') return '비밀번호는 4자 이상으로 입력하세요.';
+            return raw;
+        },
         isValidEmail: (value) => {
             if (!value) return true;
             return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
@@ -154,10 +206,41 @@ const SCRIPT_REQUEST_TIMEOUT_MS = 15000;
                 calendarManual: !!permissions.calendarManual,
                 calendarParts: !!permissions.calendarParts,
                 calendarAll: !!permissions.calendarAll,
+                calendarRejected: !!permissions.calendarRejected,
+                calendarWorkReport: !!permissions.calendarWorkReport,
+                workReportViewManual: !!permissions.workReportViewManual,
+                workReportViewParts: !!permissions.workReportViewParts,
+                workReportViewAll: !!permissions.workReportViewAll,
                 approveScope: safeApproveScope,
                 memberStatusScope: safeMemberStatusScope,
                 canAccessMasterSettings: !!permissions.canAccessMasterSettings,
-                canManageUsers: !!permissions.canManageUsers
+                canManageUsers: !!permissions.canManageUsers,
+                canAccessMasterSettingsDesktop: permissions.canAccessMasterSettingsDesktop !== undefined
+                    ? !!permissions.canAccessMasterSettingsDesktop
+                    : !!permissions.canAccessMasterSettings,
+                canManageUsersDesktop: permissions.canManageUsersDesktop !== undefined
+                    ? !!permissions.canManageUsersDesktop
+                    : !!permissions.canManageUsers,
+                canAccessMasterSettingsMobile: permissions.canAccessMasterSettingsMobile !== undefined
+                    ? !!permissions.canAccessMasterSettingsMobile
+                    : !!permissions.canAccessMasterSettings,
+                canManageUsersMobile: permissions.canManageUsersMobile !== undefined
+                    ? !!permissions.canManageUsersMobile
+                    : !!permissions.canManageUsers,
+                canAccessAdminOps: !!permissions.canAccessAdminOps,
+                canAccessAdminOpsDesktop: permissions.canAccessAdminOpsDesktop !== undefined
+                    ? !!permissions.canAccessAdminOpsDesktop
+                    : !!permissions.canAccessAdminOps,
+                canAccessAdminOpsMobile: permissions.canAccessAdminOpsMobile !== undefined
+                    ? !!permissions.canAccessAdminOpsMobile
+                    : !!permissions.canAccessAdminOps,
+                canAccessSituationBoard: !!permissions.canAccessSituationBoard,
+                canAccessSituationBoardDesktop: permissions.canAccessSituationBoardDesktop !== undefined
+                    ? !!permissions.canAccessSituationBoardDesktop
+                    : !!permissions.canAccessSituationBoard,
+                canAccessSituationBoardMobile: permissions.canAccessSituationBoardMobile !== undefined
+                    ? !!permissions.canAccessSituationBoardMobile
+                    : !!permissions.canAccessSituationBoard
             };
 
             if (role === 'master') {
@@ -165,18 +248,55 @@ const SCRIPT_REQUEST_TIMEOUT_MS = 15000;
                 clean.calendarManual = true;
                 clean.calendarParts = true;
                 clean.calendarAll = true;
+                clean.calendarRejected = true;
+                clean.calendarWorkReport = true;
+                clean.workReportViewManual = true;
+                clean.workReportViewParts = true;
+                clean.workReportViewAll = true;
                 clean.approveScope = 'all';
                 clean.memberStatusScope = 'all';
                 clean.canAccessMasterSettings = true;
                 clean.canManageUsers = true;
+                clean.canAccessMasterSettingsDesktop = true;
+                clean.canManageUsersDesktop = true;
+                clean.canAccessMasterSettingsMobile = true;
+                clean.canManageUsersMobile = true;
+                clean.canAccessAdminOps = true;
+                clean.canAccessAdminOpsDesktop = true;
+                clean.canAccessAdminOpsMobile = true;
+                clean.canAccessSituationBoard = true;
+                clean.canAccessSituationBoardDesktop = true;
+                clean.canAccessSituationBoardMobile = true;
                 return clean;
             }
 
             // Use DB permission values for non-master users
 
-            if (!clean.calendarSelf && !clean.calendarManual && !clean.calendarParts && !clean.calendarAll) {
+            if (!clean.calendarSelf && !clean.calendarManual && !clean.calendarParts && !clean.calendarAll && !clean.calendarRejected && !clean.calendarWorkReport) {
                 clean.calendarSelf = true;
             }
+            if (role === 'ceo') {
+                clean.workReportViewManual = true;
+                clean.workReportViewParts = true;
+                clean.workReportViewAll = true;
+            }
+            if (clean.workReportViewAll) {
+                clean.workReportViewManual = true;
+                clean.workReportViewParts = true;
+            }
+            if (clean.approveScope === 'all') {
+                clean.workReportViewAll = true;
+                clean.workReportViewManual = true;
+                clean.workReportViewParts = true;
+            } else if (clean.approveScope === 'manual') {
+                clean.workReportViewManual = true;
+            } else if (clean.approveScope === 'parts') {
+                clean.workReportViewParts = true;
+            }
+            clean.canAccessMasterSettings = !!(clean.canAccessMasterSettingsDesktop || clean.canAccessMasterSettingsMobile);
+            clean.canManageUsers = !!(clean.canManageUsersDesktop || clean.canManageUsersMobile);
+            clean.canAccessAdminOps = !!(clean.canAccessAdminOpsDesktop || clean.canAccessAdminOpsMobile);
+            clean.canAccessSituationBoard = !!(clean.canAccessSituationBoardDesktop || clean.canAccessSituationBoardMobile);
             return clean;
         },
         sanitizeUser: (user = {}) => ({
@@ -200,6 +320,8 @@ const SCRIPT_REQUEST_TIMEOUT_MS = 15000;
             featureMemberCard: security.normalizeBool(user.featureMemberCard, false),
             featureBoard: security.normalizeBool(user.featureBoard, true),
             featureHomepage: security.normalizeBool(user.featureHomepage, false),
+            featureOvertime: security.normalizeBool(user.featureOvertime, false),
+            featureHolidayWork: security.normalizeBool(user.featureHolidayWork, false),
             permissions: security.sanitizePermissions(user.permissions || {}, String(user.role ?? ''), security.cleanText(user.dept))
         }),
         sanitizeRequest: (req = {}) => {
@@ -222,7 +344,19 @@ const SCRIPT_REQUEST_TIMEOUT_MS = 15000;
                 timestamp: security.normalizeTimestamp(req.timestamp),
                 specialLeaveTypeKey: security.normalizeSpecialLeaveTypeKey(req.specialLeaveTypeKey),
                 specialLeaveTypeLabel: security.cleanText(req.specialLeaveTypeLabel || ''),
-                rejectReason: security.cleanText(req.rejectReason || '')
+                rejectReason: security.cleanText(req.rejectReason || ''),
+                detailReason: security.cleanText(req.detailReason || ''),
+                reportCategory: security.cleanInlineValue(req.reportCategory || ''),
+                workDetail: security.cleanMultiline(req.workDetail || ''),
+                requestDept: security.cleanText(req.requestDept || ''),
+                note: security.cleanMultiline(req.note || ''),
+                requestedStartAt: security.cleanText(req.requestedStartAt || ''),
+                requestedEndAt: security.cleanText(req.requestedEndAt || ''),
+                reportedHours: security.normalizeNumber(req.reportedHours, 0),
+                settlementPeriodKey: security.cleanInlineValue(req.settlementPeriodKey || ''),
+                settlementSubmittedAt: security.normalizeTimestamp(req.settlementSubmittedAt || ''),
+                settlementSubmittedBy: security.cleanInlineValue(req.settlementSubmittedBy || ''),
+                settlementSubmittedByName: security.cleanText(req.settlementSubmittedByName || '')
             };
         },
         sanitizeBoardPost: (post = {}) => {
@@ -252,6 +386,36 @@ const SCRIPT_REQUEST_TIMEOUT_MS = 15000;
             });
             return clean;
         },
+        sanitizeAccessLog: (item = {}) => ({
+            id: security.cleanInlineValue(item.id),
+            timestamp: security.formatAccessLogTimestamp(item.timestamp),
+            sortTimestamp: security.normalizeLogSortTimestamp(item.sortTimestamp, security.normalizeLogSortTimestamp(item.timestamp, 0)),
+            userId: security.cleanInlineValue(item.userId),
+            userName: security.cleanText(item.userName),
+            type: security.cleanText(item.type),
+            ip: security.cleanInlineValue(item.ip),
+            detail: security.cleanText(item.detail)
+        }),
+        sanitizeSecurityLog: (item = {}) => ({
+            id: security.cleanInlineValue(item.id),
+            timestamp: security.formatAccessLogTimestamp(item.timestamp),
+            sortTimestamp: security.normalizeLogSortTimestamp(item.sortTimestamp, security.normalizeLogSortTimestamp(item.timestamp, 0)),
+            userId: security.cleanInlineValue(item.userId),
+            userName: security.cleanText(item.userName),
+            eventType: security.cleanText(item.eventType),
+            severity: security.cleanText(item.severity).toLowerCase(),
+            ip: security.cleanText(item.ip),
+            userAgentHash: security.cleanInlineValue(item.userAgentHash),
+            detail: security.cleanText(item.detail),
+            context: (item.context && typeof item.context === 'object' && !Array.isArray(item.context)) ? item.context : {}
+        }),
+        sanitizeManualHoliday: (item = {}) => ({
+            id: security.cleanInlineValue(item.id || item.date),
+            date: security.normalizeDate(item.date, ''),
+            name: security.cleanText(item.name),
+            source: security.cleanText(item.source || 'manual').toLowerCase(),
+            enabled: security.normalizeBool(item.enabled, true)
+        }),
         sanitizeSpecialLeaveType: (item = {}) => ({
             typeKey: security.normalizeSpecialLeaveTypeKey(item.typeKey),
             label: security.cleanText(item.label || ''),
@@ -345,6 +509,7 @@ const SCRIPT_REQUEST_TIMEOUT_MS = 15000;
             const raw = String(rawMessage || fallback || '').trim();
             if (!raw) return fallback || '저장 실패';
             if (raw === 'LOGIN_INVALID') return '아이디 또는 비밀번호를 확인해 주세요.';
+            if (raw === 'LOGIN_BLOCKED') return '비밀번호 5회 오류로 5분간 로그인할 수 없습니다.';
             if (['SESSION_REQUIRED', 'SESSION_INVALID', 'SESSION_REVOKED', 'SESSION_EXPIRED', 'SESSION_USER_NOT_FOUND'].includes(raw)) {
                 return '로그인이 만료되었습니다. 다시 로그인해 주세요.';
             }
@@ -570,6 +735,7 @@ const SCRIPT_REQUEST_TIMEOUT_MS = 15000;
                 appData.boardPosts = Array.isArray(data.boardPosts)
                     ? data.boardPosts.map(security.sanitizeBoardPost).filter((post) => post.status !== 'deleted')
                     : [];
+                appData.meta.boardPostsLoaded = true;
             }
             if (applyHolidays) {
                 appData.holidays = security.sanitizeHolidays(data.holidays || {});
@@ -590,7 +756,7 @@ const SCRIPT_REQUEST_TIMEOUT_MS = 15000;
         },
         loadWithScope: async (scope = 'all', options = {}) => {
             try {
-                const safeScope = ['all', 'boot', 'rest'].includes(String(scope)) ? String(scope) : 'all';
+                const safeScope = ['all', 'boot', 'rest', 'board', 'situation'].includes(String(scope)) ? String(scope) : 'all';
                 const json = await db.postJson({
                     action: 'load_data',
                     scope: safeScope
@@ -613,7 +779,13 @@ const SCRIPT_REQUEST_TIMEOUT_MS = 15000;
         },
         load: async () => db.loadWithScope('all', { users: true, requests: true, boardPosts: true, holidays: true, specialLeaveTypes: true, userSpecialLeaves: true, mailRoutes: true }),
         loadBoot: async () => db.loadWithScope('boot', { users: true, requests: false, boardPosts: false, holidays: true, specialLeaveTypes: true, userSpecialLeaves: true, mailRoutes: true }),
-        loadDeferred: async () => db.loadWithScope('rest', { users: false, requests: true, boardPosts: true, holidays: false, specialLeaveTypes: false, userSpecialLeaves: false, mailRoutes: false }),
+        loadDeferred: async () => db.loadWithScope('rest', { users: false, requests: true, boardPosts: false, holidays: false, specialLeaveTypes: false, userSpecialLeaves: false, mailRoutes: false }),
+        loadBoardPosts: async () => db.loadWithScope('board', { users: false, requests: false, boardPosts: true, holidays: false, specialLeaveTypes: false, userSpecialLeaves: false, mailRoutes: false }),
+        loadSituationBoardData: async () => {
+            const result = await db.loadWithScope('situation', { users: false, requests: true, boardPosts: false, holidays: false, specialLeaveTypes: false, userSpecialLeaves: false, mailRoutes: false });
+            if (result && result.ok) appData.meta.situationBoardLoaded = true;
+            return result;
+        },
         loadSessionBoot: async () => {
             const json = await db.postJson({ action: 'session_boot' }, { timeoutMs: SCRIPT_REQUEST_TIMEOUT_MS });
             if (json && json.result === 'success') {
@@ -621,6 +793,8 @@ const SCRIPT_REQUEST_TIMEOUT_MS = 15000;
                 appData.meta.scopedLoadSupported = !!meta.scopedLoad;
                 appData.meta.lastLoadScope = String(meta.scope || 'boot');
                 db.applyLoadData(json.data || {}, { users: true, requests: false, boardPosts: false, holidays: true, specialLeaveTypes: true, userSpecialLeaves: true, mailRoutes: true });
+                appData.meta.boardPostsLoaded = false;
+                appData.meta.situationBoardLoaded = false;
             }
             return json;
         },
@@ -649,7 +823,9 @@ const SCRIPT_REQUEST_TIMEOUT_MS = 15000;
                     if (String(json.message || '') === 'REQUEST_DUPLICATE_CONFLICT') {
                         const duplicateStart = security.normalizeDate(String(json.duplicateStartDate || ''), '');
                         const duplicateEnd = security.normalizeDate(String(json.duplicateEndDate || ''), duplicateStart);
-                        throw new Error(`REQUEST_DUPLICATE_CONFLICT:${duplicateStart}:${duplicateEnd}`);
+                        const duplicateType = security.normalizeType(String(json.duplicateType || ''));
+                        const duplicateTimeRange = security.cleanText(String(json.duplicateTimeRange || ''));
+                        throw new Error(`REQUEST_DUPLICATE_CONFLICT:${duplicateStart}:${duplicateEnd}:${duplicateType}:${duplicateTimeRange}`);
                     }
                     if (String(json.message || '') === 'REQUEST_STATE_CONFLICT') {
                         const currentStatus = security.normalizeStatus(String(json.currentStatus || 'pending'));
@@ -808,6 +984,124 @@ const SCRIPT_REQUEST_TIMEOUT_MS = 15000;
                 if (!keepOverlayOnSuccess || !saveSucceeded) {
                     document.getElementById('loading-overlay').style.display = 'none';
                 }
+            }
+        },
+        submitWorkReportSettlement: async (year, month, requestIds = []) => {
+            const safeIds = Array.isArray(requestIds)
+                ? requestIds.map((id) => security.cleanInlineValue(id)).filter(Boolean)
+                : [];
+            const json = await db.postJson({
+                action: 'submit_work_report_settlement',
+                year: Number(year),
+                month: Number(month),
+                requestIds: safeIds,
+                actor: db.getActor()
+            });
+            if (json.result !== 'success') throw new Error(db.getApiErrorMessage(json.message, '정산 제출 처리 실패'));
+            return json;
+        },
+        loadAdminOpsData: async () => {
+            const json = await db.postJson({ action: 'load_admin_ops_data' }, { timeoutMs: SCRIPT_REQUEST_TIMEOUT_MS });
+            if (json.result !== 'success') throw new Error(db.getApiErrorMessage(json.message, '운영실 데이터 조회 실패'));
+            appData.accessLogs = Array.isArray(json.accessLogs)
+                ? json.accessLogs.map(security.sanitizeAccessLog).sort((a, b) => Number(b.sortTimestamp || 0) - Number(a.sortTimestamp || 0))
+                : [];
+            appData.securityLogs = Array.isArray(json.securityLogs)
+                ? json.securityLogs.map(security.sanitizeSecurityLog).sort((a, b) => Number(b.sortTimestamp || 0) - Number(a.sortTimestamp || 0))
+                : [];
+            appData.manualHolidays = Array.isArray(json.manualHolidays) ? json.manualHolidays.map(security.sanitizeManualHoliday) : [];
+            appData.holidaySummary = {
+                auto: security.normalizeNumber(json.holidaySummary && json.holidaySummary.auto, 0),
+                companyFixed: security.normalizeNumber(json.holidaySummary && json.holidaySummary.companyFixed, 0),
+                manual: security.normalizeNumber(json.holidaySummary && json.holidaySummary.manual, 0)
+            };
+            return {
+                accessLogs: appData.accessLogs,
+                securityLogs: appData.securityLogs,
+                manualHolidays: appData.manualHolidays,
+                holidaySummary: appData.holidaySummary
+            };
+        },
+        upsertManualHoliday: async (holidayData = {}, options = {}) => {
+            const keepOverlayOnSuccess = !!options.keepOverlayOnSuccess;
+            let saveSucceeded = false;
+            document.getElementById('loading-text').innerText = '수동 휴일 저장 중입니다...';
+            document.getElementById('loading-overlay').style.display = 'flex';
+            try {
+                const safeHoliday = security.sanitizeManualHoliday(holidayData);
+                const json = await db.postJson({ action: 'upsert_manual_holiday', data: safeHoliday, actor: db.getActor() });
+                if (json.result !== 'success') throw new Error(db.getApiErrorMessage(json.message, '휴일 저장 실패'));
+                const saved = security.sanitizeManualHoliday(json.holiday || safeHoliday);
+                const idx = appData.manualHolidays.findIndex((item) => String(item.id) === String(saved.id));
+                if (idx > -1) appData.manualHolidays[idx] = saved;
+                else appData.manualHolidays.push(saved);
+                appData.manualHolidays.sort((a, b) => String(a.date).localeCompare(String(b.date), 'ko'));
+                appData.holidaySummary.manual = appData.manualHolidays.length;
+                saveSucceeded = true;
+                return saved;
+            } finally {
+                if (!keepOverlayOnSuccess || !saveSucceeded) {
+                    document.getElementById('loading-overlay').style.display = 'none';
+                }
+            }
+        },
+        deleteManualHoliday: async (id) => {
+            document.getElementById('loading-text').innerText = '수동 휴일 삭제 중입니다...';
+            document.getElementById('loading-overlay').style.display = 'flex';
+            try {
+                const safeId = security.cleanInlineValue(id);
+                const json = await db.postJson({ action: 'delete_manual_holiday', id: safeId, actor: db.getActor() });
+                if (json.result !== 'success') throw new Error(db.getApiErrorMessage(json.message, '휴일 삭제 실패'));
+                appData.manualHolidays = appData.manualHolidays.filter((item) => String(item.id) !== String(safeId));
+                appData.holidaySummary.manual = appData.manualHolidays.length;
+                return true;
+            } finally {
+                document.getElementById('loading-overlay').style.display = 'none';
+            }
+        },
+        syncPublicHolidays: async (options = {}) => {
+            const currentYear = new Date().getFullYear();
+            const startYear = Number(options.startYear || currentYear);
+            const endYear = Number(options.endYear || 2030);
+            document.getElementById('loading-text').innerText = '공휴일 동기화 중입니다...';
+            document.getElementById('loading-overlay').style.display = 'flex';
+            try {
+                const json = await db.postJson(
+                    { action: 'sync_public_holidays', startYear, endYear, actor: db.getActor() },
+                    { timeoutMs: SCRIPT_REQUEST_TIMEOUT_MS }
+                );
+                if (json.result !== 'success') throw new Error(db.getApiErrorMessage(json.message, '공휴일 동기화 실패'));
+                return json;
+            } finally {
+                document.getElementById('loading-overlay').style.display = 'none';
+            }
+        },
+        downloadAccessLogsCsv: async () => {
+            document.getElementById('loading-text').innerText = '접속 로그 CSV를 준비 중입니다...';
+            document.getElementById('loading-overlay').style.display = 'flex';
+            try {
+                const json = await db.postJson(
+                    { action: 'download_access_logs_csv', actor: db.getActor() },
+                    { timeoutMs: 60000 }
+                );
+                if (json.result !== 'success') throw new Error(db.getApiErrorMessage(json.message, 'CSV 다운로드 실패'));
+                return json;
+            } finally {
+                document.getElementById('loading-overlay').style.display = 'none';
+            }
+        },
+        downloadSecurityLogsCsv: async () => {
+            document.getElementById('loading-text').innerText = '보안 로그 CSV를 준비 중입니다...';
+            document.getElementById('loading-overlay').style.display = 'flex';
+            try {
+                const json = await db.postJson(
+                    { action: 'download_security_logs_csv', actor: db.getActor() },
+                    { timeoutMs: 60000 }
+                );
+                if (json.result !== 'success') throw new Error(db.getApiErrorMessage(json.message, '보안 로그 CSV 다운로드 실패'));
+                return json;
+            } finally {
+                document.getElementById('loading-overlay').style.display = 'none';
             }
         },
         upsertBoardPost: async (postData) => {

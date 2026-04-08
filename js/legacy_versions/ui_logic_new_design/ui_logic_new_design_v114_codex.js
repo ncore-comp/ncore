@@ -21,19 +21,42 @@
         idleEventsBound: false,
         unloadLogged: false,
         permissionColumnOpen: 'calendar',
+        permissionDeptFilter: 'all',
+        masterPermissionTab: 'permissions',
+        adminOpsLoaded: false,
+        adminOpsSelectedDate: '',
+        adminOpsViewYear: new Date().getFullYear(),
+        adminOpsViewMonth: new Date().getMonth(),
+        adminOpsTargetUserId: '',
+        adminOpsHolidayEditingId: '',
+        adminOpsHolidaySyncStartYear: new Date().getFullYear(),
+        adminOpsHolidaySyncEndYear: new Date().getFullYear() + 1,
+        adminRequestMode: false,
+        adminRequestEditMode: false,
         sessionStorageKey: 'ncore_active_session_v27',
         activityInputThrottleMs: 1000,
         sessionPersistThrottleMs: 5000,
         lastSessionPersistAt: 0,
         calendarRenderCache: null,
         selectedCalendarDate: '',
+        mobileNavMenuOpen: false,
+        mobileCalendarOpen: false,
+        mobileCalendarDetailDate: '',
+        mobileRecentRequestsOpen: false,
         situationBoardSelectedDate: '',
         situationBoardScale: 'large',
         situationBoardDeptFilter: 'all',
         situationBoardSeatMapDate: '',
+        reportBoardCategory: '',
+        reportBoardYear: new Date().getFullYear(),
+        reportBoardMonth: new Date().getMonth(),
+        reportDetailRequestId: '',
+        reportDetailUserId: '',
+        specialLeaveSettingsOpen: false,
         mobileMemberStatusOpen: {},
         rejectReasonResolve: null,
         rejectReasonTargetId: '',
+        reasonModalConfig: null,
 
         init: async () => { 
             try {
@@ -46,6 +69,9 @@
         },
 
         fmtDate: (dateStr) => new Date(dateStr).toLocaleDateString('ko-KR', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'short' }),
+        setLoginScreenLayout: (enabled) => {
+            document.body.classList.toggle('login-screen-active', !!enabled);
+        },
         fmtTime: function(h) { const d = Math.floor(h / 8), r = h % 8; if (d > 0) return r > 0 ? d + "일 " + r + "시간" : d + "일"; return r + "시간"; },
         formatDayCount: (hours) => {
             const day = Number(hours || 0) / 8;
@@ -132,6 +158,15 @@
             ) || null;
         },
         isSpecialLeaveRequest: (req) => !!security.normalizeSpecialLeaveTypeKey(req && req.specialLeaveTypeKey),
+        getWorkReportCategory: (req) => {
+            const safeCategory = security.cleanInlineValue(req && req.reportCategory || '');
+            if (safeCategory === 'overtime' || safeCategory === 'holiday_work') return safeCategory;
+            const safeType = security.normalizeType((req && req.type) || '');
+            if (safeType === '잔업') return 'overtime';
+            if (safeType === '특근') return 'holiday_work';
+            return '';
+        },
+        isWorkReportRequest: (req) => ['overtime', 'holiday_work'].includes(app.getWorkReportCategory(req)),
         getRequestDisplayType: (req) => {
             if (!req) return '연차';
             if (app.isSpecialLeaveRequest(req)) {
@@ -170,7 +205,7 @@
         getRequestTypePriority: (req) => {
             if (app.isSpecialLeaveRequest(req)) return 1;
             const type = security.normalizeType((req && req.type) || '');
-            const typePriority = { '연차': 1, '반차': 2, '반차(오전)': 2, '반차(오후)': 2, '시간차(퇴근)': 3, '시간차(외출)': 4 };
+            const typePriority = { '연차': 1, '반차': 2, '반차(오전)': 2, '반차(오후)': 2, '시간차(퇴근)': 3, '시간차(외출)': 4, '잔업': 5, '특근': 6 };
             return typePriority[type] || 99;
         },
         getRequestBadgeClass: (req) => {
@@ -188,9 +223,31 @@
             const displayType = security.normalizeType((req && req.type) || '');
             if (displayType === '연차') return 'bg-lime-200 text-lime-900';
             if (app.isHalfDayType(displayType)) return 'bg-orange-100 text-orange-800';
-            if (displayType === '시간차(퇴근)') return 'bg-yellow-200 text-yellow-900';
-            if (displayType === '시간차(외출)') return 'bg-stone-200 text-stone-800';
+            if (displayType === '시간차(퇴근)') return 'bg-cyan-100 text-cyan-800';
+            if (displayType === '시간차(외출)') return 'bg-violet-100 text-violet-800';
+            if (displayType === '잔업') return 'bg-slate-100 text-slate-800';
+            if (displayType === '특근') return 'bg-rose-100 text-rose-800';
             return 'bg-gray-100 text-gray-700';
+        },
+        getRequestStatusText: (status) => {
+            const safe = security.normalizeStatus(status);
+            if (safe === 'reported') return '보고 완료';
+            if (safe === 'approved') return '승인 완료';
+            if (safe === 'pending') return '승인 대기';
+            if (safe === 'rejected') return '반려됨';
+            if (safe === 'cancel_requested') return '취소 요청중';
+            if (safe === 'cancelled') return '취소됨';
+            return '상태 없음';
+        },
+        getRequestStatusClasses: (status) => {
+            const safe = security.normalizeStatus(status);
+            if (safe === 'reported') return 'bg-sky-100 text-sky-700';
+            if (safe === 'approved') return 'bg-green-100 text-green-700';
+            if (safe === 'pending') return 'bg-yellow-100 text-yellow-700';
+            if (safe === 'rejected') return 'bg-red-100 text-red-700';
+            if (safe === 'cancel_requested') return 'bg-amber-100 text-amber-800';
+            if (safe === 'cancelled') return 'bg-gray-200 text-gray-500';
+            return 'bg-gray-100 text-gray-500';
         },
         getSpecialRequestOptionValue: (typeKey) => `special:${security.normalizeSpecialLeaveTypeKey(typeKey)}`,
         parseRequestTypeSelection: (value) => {
@@ -304,6 +361,7 @@
         },
         getRequestTypeOptionsHtml: (selectedValue = '연차') => {
             const safeSelected = String(selectedValue || '연차');
+            const requestUser = app.getRequestModalTargetUser();
             const regularOptions = [
                 { value: '연차', label: '연차' },
                 { value: '반차(오전)', label: '반차 (4시간/오전)' },
@@ -312,8 +370,8 @@
                 { value: '시간차(외출)', label: '시간차(외출)' }
             ];
             const selection = app.parseRequestTypeSelection(safeSelected);
-            const specialOptions = app.currentUser
-                ? app.getAvailableSpecialLeaveEntries(app.currentUser.id, { includeTypeKey: selection.specialLeaveTypeKey }).map((entry) => ({
+            const specialOptions = requestUser
+                ? app.getAvailableSpecialLeaveEntries(requestUser.id, { includeTypeKey: selection.specialLeaveTypeKey }).map((entry) => ({
                     value: app.getSpecialRequestOptionValue(entry.typeKey),
                     label: `특별연차(${entry.label})`
                 }))
@@ -332,6 +390,9 @@
         getRequestBucketSummary: (user, selection, editingReq = null) => {
             if (!user) {
                 return { ok: false, availableHours: 0, message: '사용자 정보가 없습니다.' };
+            }
+            if (selection && ['잔업', '특근'].includes(selection.baseType)) {
+                return { ok: true, availableHours: Number.MAX_SAFE_INTEGER, bucket: 'report', label: selection.baseType };
             }
             if (selection && selection.isSpecial) {
                 const entry = app.getUserSpecialLeaveEntries(user.id, { enabledOnly: false, includeZero: true })
@@ -405,6 +466,7 @@
         renderMyStatusCard: (user, options = {}) => {
             const titleClass = String(options.titleClass || 'text-2xl');
             const remainClass = String(options.remainClass || 'text-4xl');
+            const totalClass = String(options.totalClass || 'text-lg');
             const subtitle = String(options.subtitle || '');
             const percent = app.getUsageGaugePercent(user.usedHours, user.totalHours);
             const percentText = percent.toFixed(0).replace(/\.0$/, '');
@@ -413,11 +475,11 @@
             return `<div class="bg-white p-6 rounded-2xl shadow-sm border mb-8">
                 <div class="flex justify-between items-center gap-4">
                     <div>
-                        <h2 class="${titleClass} font-bold">내 연차 현황</h2>
+                        <h2 class="${titleClass} font-bold whitespace-nowrap leading-tight">내 연차 현황</h2>
                         <p class="text-sm text-gray-500 mt-1">${subtitle}</p>
                     </div>
                     <div class="text-right">
-                        <div class="${remainClass} font-bold text-indigo-600">${app.fmtTime(user.totalHours-user.usedHours)} <span class="text-lg text-gray-400 font-normal">/ ${app.fmtTime(user.totalHours)}</span></div>
+                        <div class="${remainClass} font-bold text-indigo-600 whitespace-nowrap leading-none">${app.fmtTime(user.totalHours-user.usedHours)} <span class="${totalClass} text-gray-400 font-normal">/ ${app.fmtTime(user.totalHours)}</span></div>
                         ${user.pendingHours > 0 ? `<div class="text-sm font-bold text-orange-500 mt-1">(승인 대기: ${app.fmtTime(user.pendingHours)})</div>` : ''}
                     </div>
                 </div>
@@ -434,6 +496,59 @@
             </div>`;
         },
         isHalfDayType: (type) => ['반차', '반차(오전)', '반차(오후)'].includes(security.normalizeType(type)),
+        isTimeOffType: (type) => ['시간차(퇴근)', '시간차(외출)'].includes(security.normalizeType(type)),
+        getSituationBoardRequestCategory: (req) => {
+            if (!req) return 'none';
+            if (app.isWorkReportRequest(req)) return 'none';
+            if (app.isSituationBoardLongAbsence(req)) return 'long';
+            if (app.isSpecialLeaveRequest(req) || security.normalizeType(req.type) === '연차') return 'annual';
+            if (app.isHalfDayType(req.type)) return 'halfday';
+            if (security.normalizeType(req.type) === '시간차(퇴근)') return 'timeoff_leave';
+            if (security.normalizeType(req.type) === '시간차(외출)') return 'timeoff_out';
+            return 'other';
+        },
+        getSituationBoardRequestPresenceState: (req, dateStr, nowMoment = moment()) => {
+            const safeDate = security.normalizeDate(dateStr, '');
+            if (!req || !safeDate || !app.shouldRenderRequestOnDate(req, safeDate)) return { absent: false };
+            const targetDay = moment(safeDate, ['YYYY-MM-DD', moment.ISO_8601], true).startOf('day');
+            const isToday = targetDay.isValid() && targetDay.isSame(nowMoment.clone().startOf('day'), 'day');
+            const status = String(req.status || '');
+            const category = app.getSituationBoardRequestCategory(req);
+
+            if (!isToday) {
+                return { absent: !['rejected', 'cancelled'].includes(status), category };
+            }
+
+            if (!['approved', 'cancel_requested'].includes(status)) {
+                return { absent: false, category };
+            }
+
+            if (category === 'annual' || category === 'long') {
+                return { absent: true, category };
+            }
+
+            const currentMinutes = (nowMoment.hours() * 60) + nowMoment.minutes();
+            if (category === 'halfday') {
+                const member = (appData.users || []).find((user) => String(user.id) === String(req.userId));
+                const range = app.buildHalfDayTimeRange(member, safeDate, req.type);
+                if (!range) return { absent: false, category };
+                return {
+                    absent: currentMinutes >= range.startMinutes && currentMinutes < range.endMinutes,
+                    category
+                };
+            }
+
+            if (category === 'timeoff_leave' || category === 'timeoff_out') {
+                const range = app.parseRequestTimeRange(req.timeRange);
+                if (!range) return { absent: false, category };
+                return {
+                    absent: currentMinutes >= range.startMinutes && currentMinutes < range.endMinutes,
+                    category
+                };
+            }
+
+            return { absent: false, category };
+        },
         getWorkShiftKeyByDate: (dateStr) => {
             const m = moment(dateStr, ['YYYY-MM-DD', moment.ISO_8601], true);
             const month = m.isValid() ? m.month() + 1 : (new Date().getMonth() + 1);
@@ -502,6 +617,7 @@
             const dateStr = security.normalizeDate(dateEl?.value, moment().format('YYYY-MM-DD'));
             const isTimeoff = type === '시간차(퇴근)';
             const showSpecialMode = selection.isSpecial && selection.requestMode === 'same_as_annual';
+            const requestUser = app.getRequestModalTargetUser() || app.currentUser;
 
             if (specialModeWrap) specialModeWrap.style.display = showSpecialMode ? 'block' : 'none';
             if (specialModeEl && showSpecialMode && !specialModeEl.value) specialModeEl.value = '연차';
@@ -510,7 +626,15 @@
             timeoffEndEl.classList.toggle('bg-gray-100', isTimeoff);
             timeoffEndEl.classList.toggle('text-gray-500', isTimeoff);
             if (isTimeoff) {
-                timeoffEndEl.value = String(app.getTimeoffEndHourForDate(app.currentUser, dateStr));
+                const endHour = Number(app.getTimeoffEndHourForDate(requestUser, dateStr));
+                const endValue = String(Number.isFinite(endHour) ? endHour : 18);
+                if (![...timeoffEndEl.options].some((option) => String(option.value) === endValue)) {
+                    const dynamicOption = document.createElement('option');
+                    dynamicOption.value = endValue;
+                    dynamicOption.text = `${endValue}:00`;
+                    timeoffEndEl.appendChild(dynamicOption);
+                }
+                timeoffEndEl.value = endValue;
             }
         },
         formatDeductionText: (req) => {
@@ -519,12 +643,16 @@
             const hoursText = Number.isInteger(hours)
                 ? String(hours)
                 : String(hours.toFixed(2).replace(/\.?0+$/, ''));
+            if (app.isWorkReportRequest(req) || ['잔업', '특근'].includes(type)) {
+                return `차감 없음 · 보고 ${hoursText}h`;
+            }
             if (type === '연차' || app.isHalfDayType(type)) {
                 return `${hoursText}h(${app.formatDayCount(hours)}일) 차감`;
             }
             return `${hoursText}h 차감`;
         },
         shouldRenderRequestOnDate: (req, dateStr) => {
+            if (app.isWorkReportRequest(req)) return app.calendarMode === 'workreport';
             if (app.isSpecialLeaveRequest(req) && (app.getSpecialLeaveRequestMode(req.specialLeaveTypeKey) === 'day_only' || app.canRequestSpecialLeaveOnHoliday(req.specialLeaveTypeKey))) {
                 return true;
             }
@@ -549,7 +677,8 @@
             if (p.calendarManual) modes.push('manual');
             if (p.calendarParts) modes.push('parts');
             if (p.calendarAll) modes.push('all');
-            if (app.hasApprovalPermission() || (app.currentUser && app.currentUser.role === 'master')) modes.push('rejected');
+            if (p.calendarRejected) modes.push('rejected');
+            if (p.calendarWorkReport) modes.push('workreport');
             if (modes.length === 0) modes.push('self');
             return modes;
         },
@@ -570,9 +699,10 @@
                 manual: '매뉴얼팀',
                 parts: '파츠북팀',
                 all: '모두',
-                rejected: '반려'
+                rejected: '반려',
+                workreport: '잔업/특근'
             };
-            const allModes = ['self', 'manual', 'parts', 'all', 'rejected'];
+            const allModes = ['self', 'manual', 'parts', 'all', 'rejected', 'workreport'];
             const allowedSet = new Set(app.getAllowedCalendarModes());
             return `<div class="inline-flex flex-wrap items-end gap-1">${allModes.map(mode => {
                 const isAllowed = allowedSet.has(mode);
@@ -589,10 +719,25 @@
                 return `<button ${attrs} class="${baseClass} ${stateClass}">${labels[mode]}</button>`;
             }).join('')}</div>`;
         },
+        getCalendarModeLabel: () => {
+            const labels = {
+                self: '개인',
+                manual: '매뉴얼팀',
+                parts: '파츠북팀',
+                all: '모두',
+                rejected: '반려',
+                workreport: '잔업/특근'
+            };
+            return labels[app.calendarMode] || '개인';
+        },
         setCalendarDisplayMode: (mode) => {
             const safeMode = mode === 'list' ? 'list' : 'month';
             if (app.calendarDisplayMode === safeMode) return;
             app.calendarDisplayMode = safeMode;
+            app.refreshDashboard();
+        },
+        toggleMobileCalendarOpen: () => {
+            app.mobileCalendarOpen = !app.mobileCalendarOpen;
             app.refreshDashboard();
         },
         renderCalendarDisplayToggle: () => {
@@ -610,10 +755,29 @@
         canAccessSituationBoard: () => {
             if (!app.currentUser) return false;
             const role = security.normalizeRole(String(app.currentUser.role || ''));
-            return role === 'ceo' || role === 'master';
+            if (role === 'master') return true;
+            const perms = app.getCurrentPermissions();
+            return app.isMobileViewport ? !!perms.canAccessSituationBoardMobile : !!perms.canAccessSituationBoardDesktop;
         },
-        openSituationBoard: () => {
+        ensureSituationBoardDataLoaded: async () => {
+            if (appData.meta.situationBoardLoaded) return true;
+            try {
+                app.setLoadingOverlayState('전체 상황판 데이터 로드중...', { subtext: '(최대 15초)' });
+                const result = await db.loadSituationBoardData();
+                return !!(result && result.ok);
+            } catch (e) {
+                console.error(e);
+                alert('전체 상황판 데이터 로드 실패: ' + (e.message || '서버 상태를 확인하세요.'));
+                return false;
+            } finally {
+                const loadingEl = document.getElementById('loading-overlay');
+                if (loadingEl) loadingEl.style.display = 'none';
+            }
+        },
+        openSituationBoard: async () => {
             if (!app.canAccessSituationBoard()) return alert('전체 상황판 권한이 없습니다.');
+            const loaded = await app.ensureSituationBoardDataLoaded();
+            if (!loaded) return;
             const today = moment().startOf('day');
             app.viewYear = today.year();
             app.viewMonth = today.month();
@@ -655,6 +819,22 @@
             if (modal) modal.classList.add('hidden');
         },
         getSituationBoardSeatMapPdfSrc: () => './gemini-svg.svg',
+        getSituationBoardSeatAnnotations: () => ([
+            {
+                id: 'entrance',
+                kind: 'entrance',
+                x: 6.2,
+                y: 50.5,
+                label: '입구'
+            },
+            {
+                id: 'ceo-room',
+                kind: 'room-label',
+                x: 79,
+                y: 56,
+                label: '대표님실'
+            }
+        ]),
         getSituationBoardSeatMapSeats: () => ([
             { id: 'A-1', occupant: '이우석', x: 25.625, y: 36.25, w: 5.625, h: 8.75 },
             { id: 'A-2', occupant: '이재용', x: 25.625, y: 21.875, w: 5.625, h: 8.75 },
@@ -701,6 +881,8 @@
                 return 3;
             };
             events.forEach((req) => {
+                const presenceState = app.getSituationBoardRequestPresenceState(req, dateStr);
+                if (!presenceState.absent) return;
                 const key = String(req.userName || '').trim();
                 if (!key) return;
                 const existing = byUser.get(key);
@@ -708,46 +890,99 @@
             });
             return byUser;
         },
+        getSituationBoardSeatDailyAbsentGroups: (dateStr) => {
+            const events = app.getSituationBoardEventsForDate(dateStr);
+            const byUser = new Map();
+            const priorityOf = (req) => {
+                if (app.isSituationBoardLongAbsence(req)) return 1;
+                if (security.normalizeType(req.type) === '연차' || app.isSpecialLeaveRequest(req)) return 2;
+                if (String(req.status || '') === 'pending') return 4;
+                return 3;
+            };
+            events.forEach((req) => {
+                const presenceState = app.getSituationBoardRequestPresenceState(req, dateStr);
+                if (!presenceState.absent) return;
+                const key = String(req.userName || '').trim();
+                if (!key) return;
+                const list = byUser.get(key) || [];
+                list.push(req);
+                byUser.set(key, list);
+            });
+            return [...byUser.entries()].map(([userName, requests]) => {
+                const sortedRequests = requests.slice().sort((a, b) => {
+                    const p = priorityOf(a) - priorityOf(b);
+                    if (p) return p;
+                    return String(a.timeRange || '').localeCompare(String(b.timeRange || ''), 'ko');
+                });
+                return {
+                    userName,
+                    dept: String(sortedRequests[0]?.dept || '').trim(),
+                    representative: sortedRequests[0] || null,
+                    requests: sortedRequests
+                };
+            }).sort((a, b) => {
+                const p = priorityOf(a.representative) - priorityOf(b.representative);
+                if (p) return p;
+                return String(a.userName || '').localeCompare(String(b.userName || ''), 'ko');
+            });
+        },
         getSituationBoardSeatToneClass: (req, occupant) => {
             if (!occupant) return '';
             if (!req) return 'is-working';
-            if (app.isSituationBoardLongAbsence(req)) return 'is-long';
+            const category = app.getSituationBoardRequestCategory(req);
+            if (category === 'long') return 'is-long';
             if (String(req.status || '') === 'pending') return 'is-pending';
-            if (security.normalizeType(req.type) === '연차' || app.isSpecialLeaveRequest(req)) return 'is-annual';
-            return 'is-partial';
+            if (category === 'annual') return 'is-annual';
+            if (category === 'halfday') return 'is-halfday';
+            if (category === 'timeoff_leave') return 'is-timeoff-leave';
+            if (category === 'timeoff_out') return 'is-timeoff-out';
+            return 'is-working';
         },
         getSituationBoardSeatStatusLabel: (req, occupant) => {
             if (!occupant) return '공석';
             if (!req) return '근무';
             return app.getRequestDisplayType(req);
         },
+        syncSituationBoardSeatMapPanelHeight: () => {
+            const stage = document.querySelector('#situation-board-seat-map-content .seat-map-stage');
+            const panel = document.querySelector('#situation-board-seat-map-content .seat-map-side-panel');
+            if (!stage || !panel) return;
+            panel.style.height = `${stage.getBoundingClientRect().height}px`;
+        },
         renderSituationBoardSeatMapModalContent: (dateStr) => {
             const safeDate = security.normalizeDate(dateStr, '');
             const title = safeDate ? app.fmtDate(safeDate) : '날짜 선택';
             const seats = app.getSituationBoardSeatMapSeats();
             const statusMap = app.getSituationBoardSeatStatusMap(safeDate);
+            const absentGroups = app.getSituationBoardSeatDailyAbsentGroups(safeDate);
             const priorityOf = (req) => {
                 if (app.isSituationBoardLongAbsence(req)) return 3;
                 if (String(req.status || '') === 'pending') return 4;
                 if (security.normalizeType(req.type) === '연차' || app.isSpecialLeaveRequest(req)) return 1;
                 return 2;
             };
-            const dailyAbsentItems = [...statusMap.values()]
-                .sort((a, b) => {
-                    const p = priorityOf(a) - priorityOf(b);
-                    if (p) return p;
-                    return String(a.userName || '').localeCompare(String(b.userName || ''), 'ko');
-                })
-                .map((req) => {
-                    const typeLabel = app.getRequestDisplayType(req);
-                    const toneClass = app.isSituationBoardLongAbsence(req)
-                        ? 'bg-blue-50 text-blue-700 border-blue-100'
-                        : (String(req.status || '') === 'pending'
-                            ? 'bg-slate-100 text-slate-600 border-slate-200'
-                            : ((security.normalizeType(req.type) === '연차' || app.isSpecialLeaveRequest(req))
-                                ? 'bg-red-50 text-red-700 border-red-100'
-                                : 'bg-yellow-50 text-yellow-700 border-yellow-200'));
-                    return `<div class="rounded-xl border border-gray-100 bg-white px-3 py-3"><div class="flex items-start justify-between gap-3"><div><div class="font-bold text-gray-800">${req.userName}</div><div class="mt-1 text-xs text-gray-500">${req.dept}</div></div><span class="shrink-0 px-2.5 py-1 rounded-full text-xs font-bold border ${toneClass}">${typeLabel}</span></div></div>`;
+            const dailyAbsentItems = absentGroups
+                .map((group) => {
+                    const requestItems = group.requests.map((req) => {
+                        const typeLabel = app.getRequestDisplayType(req);
+                        const timeDetail = (app.isHalfDayType(req.type) || app.isTimeOffType(req.type)) && req.timeRange
+                            ? `<div class="mt-1 text-xs text-gray-500">${req.timeRange}</div>`
+                            : '';
+                        const category = app.getSituationBoardRequestCategory(req);
+                        const toneClass = category === 'long'
+                            ? 'bg-blue-50 text-blue-700 border-blue-100'
+                            : (String(req.status || '') === 'pending'
+                                ? 'bg-slate-100 text-slate-600 border-slate-200'
+                                : (category === 'annual'
+                                    ? 'bg-red-50 text-red-700 border-red-100'
+                                    : (category === 'halfday'
+                                        ? 'bg-amber-50 text-amber-700 border-amber-200'
+                                        : (category === 'timeoff_leave'
+                                            ? 'bg-cyan-50 text-cyan-700 border-cyan-200'
+                                            : 'bg-violet-50 text-violet-700 border-violet-200'))));
+                        return `<div class="flex items-start justify-between gap-3 rounded-xl border border-gray-100 bg-gray-50/80 px-3 py-2"><div class="min-w-0"><div class="text-xs font-semibold text-gray-700">${typeLabel}</div>${timeDetail}</div><span class="shrink-0 px-2.5 py-1 rounded-full text-xs font-bold border ${toneClass}">${typeLabel}</span></div>`;
+                    }).join('');
+                    return `<div class="rounded-xl border border-gray-100 bg-white px-3 py-3"><div><div class="font-bold text-gray-800">${group.userName}</div><div class="mt-1 text-xs text-gray-500">${group.dept}</div></div><div class="mt-3 space-y-2">${requestItems}</div></div>`;
                 }).join('');
             const overlays = seats.map((seat) => {
                 const occupant = String(seat.occupant || '').trim();
@@ -756,7 +991,16 @@
                 if (!toneClass) return '';
                 return `<div class="seat-map-hotspot ${toneClass}" style="left:${seat.x}%; top:${seat.y}%; width:${seat.w}%; height:${seat.h}%;" title="${seat.id} / ${occupant} / ${app.getSituationBoardSeatStatusLabel(req, occupant)}"><span class="seat-map-hotspot-label">${occupant}</span></div>`;
             }).join('');
-            return `<div class="mb-4 pr-24"><div><h3 class="text-2xl font-black text-gray-900">${title}</h3><p class="mt-1 text-sm text-gray-500">선택 날짜 기준 전체 자리 배치도</p></div></div><div class="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_320px] gap-4"><div class="seat-map-stage"><img src="${app.getSituationBoardSeatMapPdfSrc()}" alt="성주동 사무실 자리 배치도" class="seat-map-pdf"><div class="seat-map-overlay">${overlays}</div></div><div class="space-y-4"><div class="bg-white rounded-2xl border border-gray-200 p-4"><div class="flex items-center justify-between mb-3"><h4 class="font-bold text-gray-900">당일 부재 인원</h4><span class="text-xs text-gray-400">${statusMap.size}명</span></div><div class="space-y-2 situation-board-mini-scroll max-h-[620px] overflow-y-auto">${dailyAbsentItems || '<div class="rounded-xl border border-dashed border-gray-200 bg-gray-50 px-3 py-4 text-sm text-gray-400">당일 부재 인원이 없습니다.</div>'}</div></div></div></div>`;
+            const annotationMarkup = app.getSituationBoardSeatAnnotations().map((item) => {
+                if (item.kind === 'entrance') {
+                    return `<div class="seat-map-annotation seat-map-entrance is-centered" style="left:${item.x}%; top:${item.y}%"><span class="seat-map-annotation-badge">${item.label}</span></div>`;
+                }
+                if (item.kind === 'room-label') {
+                    return `<div class="seat-map-annotation seat-map-door is-centered" style="left:${item.x}%; top:${item.y}%"><span class="seat-map-annotation-badge">${item.label}</span></div>`;
+                }
+                return '';
+            }).join('');
+            return `<div class="mb-4 pr-24"><div><h3 class="text-2xl font-black text-gray-900">${title}</h3><p class="mt-1 text-sm text-gray-500">선택 날짜 기준 전체 자리 배치도</p></div></div><div class="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_380px] gap-4 items-start"><div class="seat-map-stage"><img src="${app.getSituationBoardSeatMapPdfSrc()}" alt="성주동 사무실 자리 배치도" class="seat-map-pdf"><div class="seat-map-overlay">${annotationMarkup}${overlays}</div></div><div class="space-y-4"><div class="seat-map-side-panel bg-white rounded-2xl border border-gray-200 p-4 flex flex-col overflow-hidden"><div class="flex items-center justify-between mb-3"><h4 class="font-bold text-gray-900">당일 부재 인원</h4><span class="text-xs text-gray-400">${statusMap.size}명</span></div><div class="space-y-2 situation-board-mini-scroll flex-1 min-h-0 overflow-y-auto pr-1">${dailyAbsentItems || '<div class="rounded-xl border border-dashed border-gray-200 bg-gray-50 px-3 py-4 text-sm text-gray-400">당일 부재 인원이 없습니다.</div>'}</div></div></div></div>`;
         },
         openSituationBoardSeatMap: (dateStr) => {
             const safeDate = security.normalizeDate(dateStr, '');
@@ -774,6 +1018,8 @@
             const modal = document.getElementById('situation-board-seat-map-modal');
             if (contentRoot) contentRoot.innerHTML = app.renderSituationBoardSeatMapModalContent(safeDate);
             if (modal) modal.classList.remove('hidden');
+            requestAnimationFrame(() => app.syncSituationBoardSeatMapPanelHeight());
+            setTimeout(() => app.syncSituationBoardSeatMapPanelHeight(), 80);
         },
         closeSituationBoardSeatMapModal: () => {
             const modal = document.getElementById('situation-board-seat-map-modal');
@@ -782,12 +1028,12 @@
         getSituationBoardScaleConfig: () => {
             const scale = ['normal', 'large', 'xlarge'].includes(app.situationBoardScale) ? app.situationBoardScale : 'large';
             if (scale === 'xlarge') {
-                return { cardNumberClass: 'text-4xl', cardLabelClass: 'text-sm', monthTitleClass: 'text-4xl', cellDateClass: 'text-2xl', totalClass: 'text-xl', chipClass: 'text-sm', detailTitleClass: 'text-2xl', detailTextClass: 'text-base', cellMinHeight: 132, chipLimit: 2 };
+                return { cardNumberClass: 'text-4xl', cardLabelClass: 'text-sm', monthTitleClass: 'text-4xl', cellDateClass: 'text-2xl', totalClass: 'text-xl', chipClass: 'text-sm', detailTitleClass: 'text-2xl', detailTextClass: 'text-base', cellMinHeight: 132, chipLimit: 4 };
             }
             if (scale === 'normal') {
-                return { cardNumberClass: 'text-3xl', cardLabelClass: 'text-xs', monthTitleClass: 'text-3xl', cellDateClass: 'text-lg', totalClass: 'text-lg', chipClass: 'text-xs', detailTitleClass: 'text-xl', detailTextClass: 'text-sm', cellMinHeight: 96, chipLimit: 3 };
+                return { cardNumberClass: 'text-3xl', cardLabelClass: 'text-xs', monthTitleClass: 'text-3xl', cellDateClass: 'text-lg', totalClass: 'text-lg', chipClass: 'text-xs', detailTitleClass: 'text-xl', detailTextClass: 'text-sm', cellMinHeight: 96, chipLimit: 4 };
             }
-            return { cardNumberClass: 'text-4xl', cardLabelClass: 'text-sm', monthTitleClass: 'text-4xl', cellDateClass: 'text-xl', totalClass: 'text-xl', chipClass: 'text-sm', detailTitleClass: 'text-2xl', detailTextClass: 'text-sm', cellMinHeight: 114, chipLimit: 3 };
+            return { cardNumberClass: 'text-4xl', cardLabelClass: 'text-sm', monthTitleClass: 'text-4xl', cellDateClass: 'text-xl', totalClass: 'text-xl', chipClass: 'text-sm', detailTitleClass: 'text-2xl', detailTextClass: 'text-sm', cellMinHeight: 114, chipLimit: 4 };
         },
         ensureSituationBoardSelectedDate: (year, month) => {
             const current = security.normalizeDate(app.situationBoardSelectedDate, '');
@@ -878,11 +1124,13 @@
             const totalUsers = new Set(list.map((item) => String(item.userId || ''))).size;
             const approvedLike = list.filter((item) => ['approved', 'cancel_requested'].includes(String(item.status || '')));
             const pendingCount = list.filter((item) => String(item.status || '') === 'pending').length;
-            const annualCount = approvedLike.filter((item) => !app.isSpecialLeaveRequest(item) && security.normalizeType(item.type) === '연차').length;
-            const partialCount = approvedLike.filter((item) => !app.isSpecialLeaveRequest(item) && security.normalizeType(item.type) !== '연차').length;
+            const annualCount = approvedLike.filter((item) => app.getSituationBoardRequestCategory(item) === 'annual').length;
+            const halfDayCount = approvedLike.filter((item) => app.getSituationBoardRequestCategory(item) === 'halfday').length;
+            const timeOffLeaveCount = approvedLike.filter((item) => app.getSituationBoardRequestCategory(item) === 'timeoff_leave').length;
+            const timeOffOutCount = approvedLike.filter((item) => app.getSituationBoardRequestCategory(item) === 'timeoff_out').length;
             const longCount = approvedLike.filter((item) => app.isSituationBoardLongAbsence(item)).length;
             const specialCount = approvedLike.filter((item) => app.isSpecialLeaveRequest(item) && !app.isSituationBoardLongAbsence(item)).length;
-            return { totalUsers, annualCount, partialCount, longCount, specialCount, pendingCount };
+            return { totalUsers, annualCount, halfDayCount, timeOffLeaveCount, timeOffOutCount, longCount, specialCount, pendingCount };
         },
         getSituationBoardLongAbsenceTone: (req) => {
             const today = moment().startOf('day');
@@ -921,13 +1169,17 @@
                 const statusBadge = req.status === 'pending'
                     ? '<span class="px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 text-[11px] font-bold">대기</span>'
                     : '<span class="px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-700 text-[11px] font-bold">확정</span>';
-                return `<div class="rounded-xl border border-gray-100 bg-white px-3 py-3"><div class="flex items-start justify-between gap-3"><div class="min-w-0"><div class="font-bold text-gray-800 truncate">${req.userName}</div><div class="text-xs text-gray-500 mt-1">${displayType} · ${req.dept}</div></div>${statusBadge}</div></div>`;
+                const detailText = (app.isHalfDayType(req.type) || app.isTimeOffType(req.type)) && req.timeRange
+                    ? `${displayType} · ${req.timeRange} · ${req.dept}`
+                    : `${displayType} · ${req.dept}`;
+                return `<div class="rounded-xl border border-gray-100 bg-white px-3 py-3"><div class="flex items-start justify-between gap-3"><div class="min-w-0"><div class="font-bold text-gray-800 truncate">${req.userName}</div><div class="text-xs text-gray-500 mt-1">${detailText}</div></div>${statusBadge}</div></div>`;
             }).join('');
             const longHtml = dayLongAbsences.map((req) => {
                 const tone = app.getSituationBoardLongAbsenceTone(req);
                 return `<div class="rounded-xl px-3 py-3 ${tone.barClass}"><div class="flex items-center justify-between gap-3"><div class="min-w-0"><div class="font-bold truncate">${req.userName}</div><div class="text-xs mt-1">${security.normalizeDate(req.startDate, '-')}${security.normalizeDate(req.endDate, req.startDate) !== security.normalizeDate(req.startDate, '-') ? ` ~ ${security.normalizeDate(req.endDate, req.startDate)}` : ''}</div></div><span class="shrink-0 px-2 py-0.5 rounded-full text-[11px] font-bold ${tone.badgeClass}">${tone.badge}</span></div></div>`;
             }).join('');
-            return `<div class="bg-white rounded-2xl border border-gray-200 shadow-sm p-5 h-full"><div class="flex items-start justify-between gap-3 mb-4"><div><h3 class="${scale.detailTitleClass} font-bold text-gray-900">${title}</h3><p class="mt-1 text-sm text-gray-500">이 날짜의 전체 상황 요약</p></div><div class="shrink-0 text-right"><div class="text-xs text-gray-400">부재</div><div class="text-3xl font-black text-indigo-700">${summary.totalUsers}</div></div></div><div class="grid grid-cols-2 gap-2 mb-4 text-xs"><div class="rounded-xl bg-indigo-50 px-3 py-2 text-indigo-700 font-bold">연차 ${summary.annualCount}</div><div class="rounded-xl bg-amber-50 px-3 py-2 text-amber-700 font-bold">반차/시간차 ${summary.partialCount}</div><div class="rounded-xl bg-emerald-50 px-3 py-2 text-emerald-700 font-bold">장기부재 ${summary.longCount}</div><div class="rounded-xl bg-slate-100 px-3 py-2 text-slate-700 font-bold">대기 ${summary.pendingCount}</div></div><div class="space-y-4 situation-board-mini-scroll overflow-y-auto max-h-[calc(100vh-280px)]"><div><div class="flex items-center justify-between mb-2"><h4 class="font-bold text-gray-800">장기 부재</h4><span class="text-xs text-gray-400">${dayLongAbsences.length}건</span></div>${longHtml || '<div class="text-sm text-gray-400 rounded-xl border border-dashed border-gray-200 px-3 py-4">장기 부재 없음</div>'}</div><div><div class="flex items-center justify-between mb-2"><h4 class="font-bold text-gray-800">일반 부재</h4><span class="text-xs text-gray-400">${events.length}건</span></div><div class="space-y-2">${itemsHtml || '<div class="text-sm text-gray-400 rounded-xl border border-dashed border-gray-200 px-3 py-4">부재 없음</div>'}</div></div></div></div>`;
+            const longSummaryTone = summary.longCount > 0 ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-50 text-slate-500';
+            return `<div class="bg-white rounded-2xl border border-gray-200 shadow-sm p-5 h-full"><div class="flex items-start justify-between gap-3 mb-4"><div><h3 class="${scale.detailTitleClass} font-bold text-gray-900">${title}</h3><p class="mt-1 text-sm text-gray-500">이 날짜의 전체 상황 요약</p></div><div class="shrink-0 text-right"><div class="text-xs text-gray-400">부재</div><div class="text-3xl font-black text-indigo-700">${summary.totalUsers}</div></div></div><div class="grid grid-cols-2 gap-2 mb-4 text-xs"><div class="rounded-xl bg-red-50 px-3 py-2 text-red-700 font-bold">연차 ${summary.annualCount}</div><div class="rounded-xl bg-amber-50 px-3 py-2 text-amber-700 font-bold">반차 ${summary.halfDayCount}</div><div class="rounded-xl bg-cyan-50 px-3 py-2 text-cyan-700 font-bold">시간차(퇴근) ${summary.timeOffLeaveCount}</div><div class="rounded-xl bg-violet-50 px-3 py-2 text-violet-700 font-bold">시간차(외출) ${summary.timeOffOutCount}</div><div class="rounded-xl px-3 py-2 font-bold ${longSummaryTone}">장기부재 ${summary.longCount}</div><div class="rounded-xl bg-slate-100 px-3 py-2 text-slate-700 font-bold">대기 ${summary.pendingCount}</div></div><div class="space-y-4 situation-board-mini-scroll overflow-y-auto max-h-[calc(100vh-280px)]"><div><div class="flex items-center justify-between mb-2"><h4 class="font-bold text-gray-800">장기 부재</h4><span class="text-xs text-gray-400">${dayLongAbsences.length}건</span></div>${longHtml || '<div class="text-sm text-gray-400 rounded-xl border border-dashed border-gray-200 px-3 py-4">장기 부재 없음</div>'}</div><div><div class="flex items-center justify-between mb-2"><h4 class="font-bold text-gray-800">일반 부재</h4><span class="text-xs text-gray-400">${events.length}건</span></div><div class="space-y-2">${itemsHtml || '<div class="text-sm text-gray-400 rounded-xl border border-dashed border-gray-200 px-3 py-4">부재 없음</div>'}</div></div></div></div>`;
         },
         renderSituationBoard: () => {
             if (!app.currentUser) return app.renderLogin();
@@ -991,12 +1243,14 @@
                     ? 'text-indigo-700'
                     : (isRed ? 'holiday-text' : (isSat ? 'sat-text' : 'text-gray-800'));
                 const chips = [
-                    summary.annualCount > 0 ? { label: `연차 ${summary.annualCount}`, cls: 'bg-indigo-50 text-indigo-700' } : null,
-                    summary.partialCount > 0 ? { label: `반차 ${summary.partialCount}`, cls: 'bg-amber-50 text-amber-700' } : null,
+                    summary.annualCount > 0 ? { label: `연차 ${summary.annualCount}`, cls: 'bg-red-50 text-red-700' } : null,
+                    summary.halfDayCount > 0 ? { label: `반차 ${summary.halfDayCount}`, cls: 'bg-amber-50 text-amber-700' } : null,
+                    summary.timeOffLeaveCount > 0 ? { label: `시간차(퇴근) ${summary.timeOffLeaveCount}`, cls: 'bg-cyan-50 text-cyan-700' } : null,
+                    summary.timeOffOutCount > 0 ? { label: `시간차(외출) ${summary.timeOffOutCount}`, cls: 'bg-violet-50 text-violet-700' } : null,
                     summary.longCount > 0 ? { label: `휴직 ${summary.longCount}`, cls: 'bg-emerald-50 text-emerald-700' } : null,
                     summary.pendingCount > 0 ? { label: `대기 ${summary.pendingCount}`, cls: 'bg-slate-100 text-slate-700' } : null
                 ].filter(Boolean).slice(0, scale.chipLimit);
-                cellsHtml += `<div class="situation-board-cell ${isToday ? 'is-today' : ''} ${isSelected ? 'is-selected' : ''}" data-situation-date="${dateStr}" style="min-height:${scale.cellMinHeight}px" onclick="app.openSituationBoardSeatMap('${dateStr}')"><div class="flex items-start justify-between gap-2"><div class="flex items-start gap-2 min-w-0"><span class="${scale.cellDateClass} font-black ${dateColorClass}">${d}</span>${holName ? `<span class="mt-1 text-[10px] text-white bg-red-400 px-1.5 py-0.5 rounded truncate max-w-[78px]">${holName}</span>` : ''}</div>${summary.totalUsers > 0 ? `<span class="${scale.totalClass} font-black text-gray-800">${summary.totalUsers}</span>` : ''}</div><div class="mt-2 flex flex-col gap-1">${chips.map((chip) => `<div class="px-2.5 py-1 rounded-full font-bold ${chip.cls} ${scale.chipClass}">${chip.label}</div>`).join('') || `<div class="text-gray-300 ${scale.chipClass} font-medium">-</div>`}</div></div>`;
+                cellsHtml += `<div class="situation-board-cell ${isToday ? 'is-today' : ''} ${isSelected ? 'is-selected' : ''}" data-situation-date="${dateStr}" style="min-height:${scale.cellMinHeight}px" onclick="app.openSituationBoardSeatMap('${dateStr}')"><div class="flex items-start justify-between gap-2"><div class="flex items-start gap-2 min-w-0"><span class="${scale.cellDateClass} font-black ${dateColorClass}">${d}</span>${holName ? `<span class="mt-1 text-[10px] text-white bg-red-400 px-1.5 py-0.5 rounded truncate max-w-[78px]">${holName}</span>` : ''}</div>${summary.totalUsers > 0 ? `<span class="${scale.totalClass} font-black text-gray-800">${summary.totalUsers}</span>` : ''}</div><div class="mt-2 grid grid-cols-2 gap-1.5">${chips.map((chip) => `<div class="px-2 py-1 rounded-full font-bold leading-tight ${chip.cls} ${scale.chipClass}">${chip.label}</div>`).join('') || `<div class="text-gray-300 ${scale.chipClass} font-medium col-span-2">-</div>`}</div></div>`;
             }
             const usedCells = firstDayIdx + lastDate;
             const trailingCells = (7 - (usedCells % 7)) % 7;
@@ -1014,7 +1268,11 @@
                 ['manual', '매뉴얼팀'],
                 ['parts', '파츠북팀']
             ].map(([value, label]) => `<button onclick="app.setSituationBoardDeptFilter('${value}')" class="px-4 py-2 rounded-xl text-sm font-bold border ${app.situationBoardDeptFilter === value ? 'bg-slate-800 text-white border-slate-900' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'}">${label}</button>`).join('');
-            const infoButton = `<button onclick="app.openSituationBoardInfoModal()" class="px-4 py-2.5 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-700 font-bold hover:bg-emerald-100">장기부재 ${activeLongCount} · 이번주 복귀 ${returnSoonCount}</button>`;
+            const hasLongAbsenceSignal = activeLongCount > 0 || returnSoonCount > 0;
+            const infoButtonClass = hasLongAbsenceSignal
+                ? 'bg-emerald-50 border-emerald-200 text-emerald-700 hover:bg-emerald-100'
+                : 'bg-slate-50 border-slate-200 text-slate-500 hover:bg-slate-100';
+            const infoButton = `<button onclick="app.openSituationBoardInfoModal()" class="px-4 py-2.5 rounded-xl border font-bold ${infoButtonClass}">장기부재 ${activeLongCount} · 이번주 복귀 ${returnSoonCount}</button>`;
             const infoModal = `<div id="situation-board-info-modal" class="fixed inset-0 z-[90] hidden bg-black/40 backdrop-blur-sm p-4" onclick="if(event.target===this) app.closeSituationBoardInfoModal()"><div class="w-full max-w-4xl max-h-[calc(100vh-40px)] overflow-y-auto mx-auto bg-white rounded-2xl border border-gray-200 shadow-2xl"><div class="sticky top-0 bg-white border-b border-gray-100 px-6 py-5 flex items-start justify-between gap-4"><div><h3 class="text-2xl font-black text-gray-900">장기 부재 현황</h3><p class="mt-1 text-sm text-gray-500">장기 부재와 이번주 복귀 예정 목록</p></div><button type="button" class="text-gray-400 hover:text-gray-700 text-2xl leading-none" onclick="app.closeSituationBoardInfoModal()">×</button></div><div class="px-6 py-5 space-y-6"><div><div class="flex items-center justify-between mb-3"><h4 class="text-lg font-bold text-gray-900">장기 부재</h4><span class="text-sm text-gray-400">${data.longAbsences.length}건</span></div>${app.renderSituationBoardLongAbsences(data.longAbsences, scale)}</div><div><div class="flex items-center justify-between mb-3"><h4 class="text-lg font-bold text-gray-900">이번주 복귀</h4><span class="text-sm text-gray-400">${returnSoonList.length}건</span></div><div class="space-y-2">${returnSoonList.map((req) => { const tone = app.getSituationBoardLongAbsenceTone(req); return `<div class="rounded-2xl px-4 py-3 ${tone.barClass}"><div class="flex items-center justify-between gap-3"><div class="min-w-0"><div class="font-bold truncate">${req.userName} <span class="font-medium opacity-80">/ ${req.dept}</span></div><div class="text-xs mt-1 truncate">${security.normalizeDate(req.startDate, '-')}${security.normalizeDate(req.endDate, req.startDate) !== security.normalizeDate(req.startDate, '-') ? ` ~ ${security.normalizeDate(req.endDate, req.startDate)}` : ''}</div></div><span class="shrink-0 px-2.5 py-1 rounded-full text-xs font-bold ${tone.badgeClass}">${tone.badge}</span></div></div>`; }).join('') || '<div class="rounded-2xl border border-dashed border-gray-200 bg-gray-50 px-4 py-5 text-sm text-gray-400">이번주 복귀 예정이 없습니다.</div>'}</div></div></div></div></div>`;
             const seatMapModal = `<div id="situation-board-seat-map-modal" class="fixed inset-0 z-[120] hidden bg-black/45 backdrop-blur-sm px-4 pt-24 pb-4 overflow-y-auto flex items-start justify-center" onclick="if(event.target===this) app.closeSituationBoardSeatMapModal()"><div class="relative w-full max-w-[1400px] rounded-2xl bg-white border border-gray-200 shadow-2xl p-5 pt-6"><button type="button" class="absolute right-5 top-5 z-10 px-4 py-2 rounded-xl bg-white border border-gray-200 text-gray-600 font-bold hover:bg-gray-50" onclick="app.closeSituationBoardSeatMapModal()">닫기</button><div id="situation-board-seat-map-content">${app.renderSituationBoardSeatMapModalContent(selectedDate)}</div></div></div>`;
             document.getElementById('app-container').innerHTML = `<div class="situation-board-page fade-in"><div class="situation-board-shell"><div class="bg-white rounded-2xl border border-gray-200 shadow-sm px-5 py-4"><div class="flex flex-col xl:flex-row xl:items-end xl:justify-between gap-4"><div><div class="flex items-center gap-3 flex-wrap"><h2 class="${scale.monthTitleClass} font-black text-gray-900">전체 상황판</h2><span class="px-3 py-1 rounded-full bg-indigo-50 text-indigo-700 text-sm font-bold">대표 / 마스터</span></div><p class="mt-2 text-sm text-gray-500">브라우저 전체영역을 사용하는 큰 글씨 달력 요약 화면</p></div><div class="flex flex-wrap items-center gap-2">${deptButtons}${infoButton}<div class="w-px h-8 bg-gray-200 mx-1 hidden md:block"></div>${scaleButtons}${boardActionBtn}</div></div></div><div class="situation-board-content"><div class="situation-board-main flex flex-col gap-4 min-h-0"><div class="bg-white rounded-2xl border border-gray-200 shadow-sm p-4 flex flex-col flex-1 min-h-0"><div class="mb-3 flex items-center justify-between gap-3"><div><h3 class="text-lg font-bold text-gray-900">월간 요약 달력</h3><p class="text-xs text-gray-500">날짜를 클릭하면 해당 날짜의 전체 배치도가 열립니다.</p></div><div class="flex items-center gap-2"><button onclick="app.changeMonth(-1)" class="w-10 h-10 rounded-full bg-gray-100 text-gray-600 hover:bg-gray-200"><i class="fa-solid fa-chevron-left"></i></button><div class="text-xl font-black text-gray-900 min-w-[170px] text-center">${year}년 ${month + 1}월</div><button onclick="app.changeMonth(1)" class="w-10 h-10 rounded-full bg-gray-100 text-gray-600 hover:bg-gray-200"><i class="fa-solid fa-chevron-right"></i></button></div></div><div class="mb-3 text-xs text-gray-400">선택 날짜: ${selectedDate ? app.fmtDate(selectedDate) : '-'}</div><div class="situation-board-calendar-wrap"><div class="situation-board-grid" style="grid-template-rows:auto repeat(${weekRows}, minmax(0, 1fr));"><div class="situation-board-header-cell holiday-text">일</div><div class="situation-board-header-cell">월</div><div class="situation-board-header-cell">화</div><div class="situation-board-header-cell">수</div><div class="situation-board-header-cell">목</div><div class="situation-board-header-cell">금</div><div class="situation-board-header-cell sat-text">토</div>${cellsHtml}</div></div></div><div class="grid grid-cols-1 md:grid-cols-2 gap-3">${bottomSummaryCards.map((card) => `<div class="bg-white rounded-2xl border border-gray-200 shadow-sm px-4 py-4"><div class="${card.tone} inline-flex px-2.5 py-1 rounded-full ${scale.cardLabelClass} font-bold">${card.label}</div><div class="mt-3 ${scale.cardNumberClass} font-black text-gray-900">${card.value}</div></div>`).join('')}</div></div><div class="situation-board-panel"><div id="situation-board-detail-panel-root">${app.renderSituationBoardDetailPanel(selectedDate, selectedEvents, data.longAbsences, scale)}</div></div></div></div>${infoModal}${seatMapModal}${app.getModal()}`;
@@ -1052,31 +1310,48 @@
 
             return `<div class="border-t border-gray-200">${items.length ? items.join('') : '<div class="p-6 text-center text-sm text-gray-400">이번 달 일정이 없습니다.</div>'}</div>`;
         },
+        getAccessibleCalendarRequests: (validRequests, viewer) => {
+            const p = app.getCurrentPermissions();
+            if ((app.currentUser && app.currentUser.role === 'master') || p.calendarAll) {
+                return validRequests.slice();
+            }
+            const collected = [];
+            const seenIds = new Set();
+            const pushIfNew = (req) => {
+                const safeId = String((req && req.id) || '');
+                if (safeId && seenIds.has(safeId)) return;
+                if (safeId) seenIds.add(safeId);
+                collected.push(req);
+            };
+            if (p.calendarSelf) {
+                validRequests.filter(r => String(r.userId) === String(viewer.id)).forEach(pushIfNew);
+            }
+            if (p.calendarManual) {
+                validRequests.filter(r => r.dept === '매뉴얼팀').forEach(pushIfNew);
+            }
+            if (p.calendarParts) {
+                validRequests.filter(r => r.dept === '파츠북팀').forEach(pushIfNew);
+            }
+            return collected;
+        },
         getCalendarRequests: (validRequests, viewer) => {
             app.ensureCalendarMode();
             if (app.calendarMode === 'rejected') {
-                const scope = app.getCurrentPermissions().approveScope;
-                if (scope === 'all' || (app.currentUser && app.currentUser.role === 'master')) {
-                    return validRequests.filter(r => r.status === 'rejected');
-                }
-                if (scope === 'manual') {
-                    return validRequests.filter(r => r.dept === '매뉴얼팀' && r.status === 'rejected');
-                }
-                if (scope === 'parts') {
-                    return validRequests.filter(r => r.dept === '파츠북팀' && r.status === 'rejected');
-                }
-                return [];
+                return app.getAccessibleCalendarRequests(validRequests, viewer).filter(r => r.status === 'rejected' && !app.isWorkReportRequest(r));
+            }
+            if (app.calendarMode === 'workreport') {
+                return app.getAccessibleCalendarRequests(validRequests, viewer).filter(r => app.isWorkReportRequest(r) && r.status === 'reported');
             }
             if (app.calendarMode === 'all') {
-                return validRequests.filter(r => ['approved', 'cancel_requested'].includes(r.status));
+                return validRequests.filter(r => !app.isWorkReportRequest(r) && ['approved', 'cancel_requested'].includes(r.status));
             }
             if (app.calendarMode === 'manual') {
-                return validRequests.filter(r => r.dept === '매뉴얼팀' && ['approved', 'cancel_requested'].includes(r.status));
+                return validRequests.filter(r => r.dept === '매뉴얼팀' && !app.isWorkReportRequest(r) && ['approved', 'cancel_requested'].includes(r.status));
             }
             if (app.calendarMode === 'parts') {
-                return validRequests.filter(r => r.dept === '파츠북팀' && ['approved', 'cancel_requested'].includes(r.status));
+                return validRequests.filter(r => r.dept === '파츠북팀' && !app.isWorkReportRequest(r) && ['approved', 'cancel_requested'].includes(r.status));
             }
-            return validRequests.filter(r => String(r.userId) === String(viewer.id) && ['approved', 'cancel_requested'].includes(r.status));
+            return validRequests.filter(r => String(r.userId) === String(viewer.id) && !app.isWorkReportRequest(r) && ['approved', 'cancel_requested'].includes(r.status));
         },
         canApproveRequest: (req) => {
             if (!req || !app.currentUser) return false;
@@ -1103,8 +1378,28 @@
             return false;
         },
         hasApprovalPermission: () => app.getCurrentPermissions().approveScope !== 'none',
-        hasMasterPermissionAccess: () => app.currentUser && (app.currentUser.role === 'master' || app.getCurrentPermissions().canAccessMasterSettings),
-        hasUserManagePermission: () => app.getCurrentPermissions().canManageUsers,
+        hasMasterPermissionAccess: () => {
+            if (!app.currentUser) return false;
+            if (app.currentUser.role === 'master') return true;
+            const perms = app.getCurrentPermissions();
+            return app.isMobileViewport ? !!perms.canAccessMasterSettingsMobile : !!perms.canAccessMasterSettingsDesktop;
+        },
+        hasUserManagePermission: () => {
+            const perms = app.getCurrentPermissions();
+            return app.isMobileViewport ? !!perms.canManageUsersMobile : !!perms.canManageUsersDesktop;
+        },
+        hasAdminOpsAccess: () => {
+            if (!app.currentUser) return false;
+            if (app.hasMasterPermissionAccess()) return true;
+            const perms = app.getCurrentPermissions();
+            return app.isMobileViewport ? !!perms.canAccessAdminOpsMobile : !!perms.canAccessAdminOpsDesktop;
+        },
+        canViewAdminWorkReportBoard: () => {
+            if (!app.currentUser) return false;
+            const role = security.normalizeRole(String(app.currentUser.role || ''));
+            if (role === 'master' || role === 'ceo') return true;
+            return app.hasMasterPermissionAccess() || app.hasAdminOpsAccess() || app.hasUserManagePermission();
+        },
         isMemberCardFeatureEnabled: () => {
             const masterUser = appData.users.find(user => user.role === 'master');
             if (masterUser) return !!masterUser.featureMemberCard;
@@ -1120,12 +1415,28 @@
             if (masterUser) return !!masterUser.featureHomepage;
             return !!(app.currentUser && app.currentUser.featureHomepage);
         },
+        isOvertimeFeatureEnabled: () => {
+            const masterUser = appData.users.find(user => user.role === 'master');
+            if (masterUser) return !!masterUser.featureOvertime;
+            return !!(app.currentUser && app.currentUser.featureOvertime);
+        },
+        isHolidayWorkFeatureEnabled: () => {
+            const masterUser = appData.users.find(user => user.role === 'master');
+            if (masterUser) return !!masterUser.featureHolidayWork;
+            return !!(app.currentUser && app.currentUser.featureHolidayWork);
+        },
+        isAnyWorkReportFeatureEnabled: () => app.isOvertimeFeatureEnabled() || app.isHolidayWorkFeatureEnabled(),
+        getAvailableWorkReportTypes: () => {
+            const items = [];
+            if (app.isOvertimeFeatureEnabled()) items.push('잔업');
+            if (app.isHolidayWorkFeatureEnabled()) items.push('특근');
+            return items;
+        },
         getWorkShiftText: (value) => {
             const safe = security.normalizeWorkShift(value);
             return safe || '미등록';
         },
         getMemberCardData: (user) => {
-            const currentYear = new Date().getFullYear();
             return [
                 { label: '이름', value: user.name || '-' },
                 { label: '유형', value: app.getRoleLabelKo(user) },
@@ -1133,10 +1444,10 @@
                 { label: '전화번호', value: user.phone || '-' },
                 { label: '이메일', value: user.email || '-' },
                 { label: '사번', value: user.employeeNo || user.id || '-' },
-                { label: `${currentYear}년 1분기 근무시간`, value: app.getWorkShiftText(user.workQ1) },
-                { label: `${currentYear}년 2분기 근무시간`, value: app.getWorkShiftText(user.workQ2) },
-                { label: `${currentYear}년 3분기 근무시간`, value: app.getWorkShiftText(user.workQ3) },
-                { label: `${currentYear}년 4분기 근무시간`, value: app.getWorkShiftText(user.workQ4) }
+                { label: '1분기 근무시간', value: app.getWorkShiftText(user.workQ1) },
+                { label: '2분기 근무시간', value: app.getWorkShiftText(user.workQ2) },
+                { label: '3분기 근무시간', value: app.getWorkShiftText(user.workQ3) },
+                { label: '4분기 근무시간', value: app.getWorkShiftText(user.workQ4) }
             ];
         },
         getManageScopeUsers: () => {
@@ -1160,6 +1471,594 @@
             if (app.currentUser.role === 'master') return true;
             const scopeUsers = app.getManageScopeUsers();
             return scopeUsers.some(u => String(u.id) === String(safeId));
+        },
+        getAdminOpsTargetUsers: () => {
+            if (!app.currentUser || !app.hasAdminOpsAccess()) return [];
+            return appData.users.filter((u) => u && u.role !== 'master');
+        },
+        ensureAdminOpsTargetUser: () => {
+            const candidates = app.getAdminOpsTargetUsers();
+            if (!candidates.length) {
+                app.adminOpsTargetUserId = '';
+                return null;
+            }
+            const exists = candidates.find((u) => String(u.id) === String(app.adminOpsTargetUserId));
+            if (!exists) app.adminOpsTargetUserId = String(candidates[0].id);
+            return candidates.find((u) => String(u.id) === String(app.adminOpsTargetUserId)) || candidates[0];
+        },
+        setAdminOpsTargetUser: (userId) => {
+            app.adminOpsTargetUserId = security.cleanInlineValue(userId);
+            app.adminOpsSelectedDate = '';
+            app.renderMasterPermissionPage();
+        },
+        changeAdminOpsMonth: (delta) => {
+            const next = moment({ year: app.adminOpsViewYear, month: app.adminOpsViewMonth, day: 1 }).add(Number(delta || 0), 'month');
+            app.adminOpsViewYear = next.year();
+            app.adminOpsViewMonth = next.month();
+            app.renderMasterPermissionPage();
+        },
+        setAdminOpsSelectedDate: (dateStr) => {
+            app.adminOpsSelectedDate = security.normalizeDate(dateStr, '');
+            app.renderMasterPermissionPage();
+        },
+        isAdminProxyRequestMode: () => !!app.adminRequestMode,
+        getRequestModalTargetUser: () => {
+            if (!app.isAdminProxyRequestMode()) return app.currentUser;
+            const selectEl = document.getElementById('req-target-user');
+            const safeId = security.cleanInlineValue((selectEl && selectEl.value) || app.adminOpsTargetUserId || '');
+            return app.getAdminOpsTargetUsers().find((u) => String(u.id) === String(safeId)) || null;
+        },
+        syncRequestTargetField: () => {
+            const wrap = document.getElementById('div-proxy-user');
+            const selectEl = document.getElementById('req-target-user');
+            if (!wrap || !selectEl) return;
+            if (!app.isAdminProxyRequestMode()) {
+                wrap.classList.add('hidden');
+                return;
+            }
+            const users = app.getAdminOpsTargetUsers();
+            wrap.classList.remove('hidden');
+            if (!users.length) {
+                selectEl.innerHTML = '<option value="">관리 가능한 직원 없음</option>';
+                return;
+            }
+            app.ensureAdminOpsTargetUser();
+            selectEl.innerHTML = users.map((user) => `<option value="${security.cleanInlineValue(user.id)}">${user.name} (${user.dept})</option>`).join('');
+            selectEl.value = app.adminOpsTargetUserId;
+        },
+        handleRequestTargetUserChange: (value) => {
+            app.adminOpsTargetUserId = security.cleanInlineValue(value);
+            const currentType = document.getElementById('req-type')?.value || '연차';
+            const nextType = String(currentType || '').startsWith('special:') ? '연차' : currentType;
+            app.refreshRequestTypeOptions(nextType);
+            app.syncRequestTypeDefaults();
+        },
+        openAdminProxyRequestModal: (presetDate = '') => {
+            if (!app.hasAdminOpsAccess()) return alert('운영실 접근 권한이 없습니다.');
+            const targetUser = app.ensureAdminOpsTargetUser();
+            if (!targetUser) return alert('관리 가능한 직원이 없습니다.');
+            app.openRequestModal(presetDate, { adminMode: true, targetUserId: targetUser.id });
+        },
+        loadAdminOpsPanelData: async (options = {}) => {
+            const force = !!options.force;
+            if (app.adminOpsLoaded && !force) return true;
+            try {
+                await db.loadAdminOpsData();
+                app.adminOpsLoaded = true;
+                return true;
+            } catch (e) {
+                if (!options.silent) alert('운영실 데이터 로드 실패: ' + e.message);
+                return false;
+            }
+        },
+        buildAdminOpsCalendarData: (targetUser, year = app.adminOpsViewYear, month = app.adminOpsViewMonth) => {
+            const safeTarget = targetUser || app.ensureAdminOpsTargetUser();
+            const monthStart = moment({ year, month, day: 1 });
+            const monthEnd = monthStart.clone().endOf('month');
+            const eventMap = {};
+            if (!safeTarget) return { eventMap };
+            const items = (appData.requests || [])
+                .filter((req) => String(req.userId) === String(safeTarget.id))
+                .sort((a, b) =>
+                    app.getRequestTypePriority(a) - app.getRequestTypePriority(b) ||
+                    String(a.startDate || '').localeCompare(String(b.startDate || ''), 'ko') ||
+                    String(a.timestamp || '').localeCompare(String(b.timestamp || ''), 'ko')
+                );
+            items.forEach((req) => {
+                const start = moment(req.startDate);
+                const end = moment(req.endDate || req.startDate);
+                const rangeStart = moment.max(start, monthStart);
+                const rangeEnd = moment.min(end, monthEnd);
+                if (rangeStart.isAfter(rangeEnd, 'day')) return;
+                const cursor = rangeStart.clone();
+                while (cursor.isSameOrBefore(rangeEnd, 'day')) {
+                    const key = cursor.format('YYYY-MM-DD');
+                    if (!eventMap[key]) eventMap[key] = [];
+                    eventMap[key].push(req);
+                    cursor.add(1, 'day');
+                }
+            });
+            Object.keys(eventMap).forEach((key) => {
+                eventMap[key].sort((a, b) =>
+                    app.getRequestTypePriority(a) - app.getRequestTypePriority(b) ||
+                    String(a.startDate || '').localeCompare(String(b.startDate || ''), 'ko') ||
+                    String(a.timestamp || '').localeCompare(String(b.timestamp || ''), 'ko')
+                );
+            });
+            return { eventMap };
+        },
+        getAdminOpsRequestsForDate: (dateStr, targetUser = app.ensureAdminOpsTargetUser()) => {
+            const safeDate = security.normalizeDate(dateStr, '');
+            if (!safeDate || !targetUser) return [];
+            return (appData.requests || [])
+                .filter((req) => String(req.userId) === String(targetUser.id))
+                .filter((req) => {
+                    const start = security.normalizeDate(req.startDate, '');
+                    const end = security.normalizeDate(req.endDate, start);
+                    return !!start && !!end && safeDate >= start && safeDate <= end;
+                })
+                .sort((a, b) =>
+                    String(a.startDate || '').localeCompare(String(b.startDate || ''), 'ko') ||
+                    app.getRequestTypePriority(a) - app.getRequestTypePriority(b) ||
+                    String(a.timestamp || '').localeCompare(String(b.timestamp || ''), 'ko')
+                );
+        },
+        renderAdminOpsLogPanel: () => {
+            const logs = Array.isArray(appData.accessLogs) ? appData.accessLogs.slice(0, 20) : [];
+            return `<div class="bg-white border border-gray-200 rounded-xl shadow-sm p-4">
+                <div class="flex items-center justify-between gap-3 mb-3">
+                    <div>
+                        <p class="text-sm font-bold text-gray-800">최근 접속 로그</p>
+                        <p class="text-xs text-gray-500">최근 20건만 표시합니다.</p>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <button onclick="app.downloadAccessLogsCsv()" class="px-3 py-1.5 rounded-lg bg-slate-800 text-white text-xs font-bold hover:bg-slate-900">CSV 다운로드</button>
+                        <span class="text-[11px] font-bold text-slate-500">${logs.length}건</span>
+                    </div>
+                </div>
+                <div class="space-y-2 max-h-[420px] overflow-y-auto pr-1 custom-scrollbar">
+                    ${logs.length ? logs.map((log) => `
+                        <div class="rounded-lg border border-gray-200 bg-slate-50 px-3 py-2">
+                            <div class="flex items-center justify-between gap-2">
+                                <span class="text-sm font-bold text-gray-800">${log.userName || '-'}</span>
+                                <span class="text-[11px] font-bold px-2 py-0.5 rounded-full bg-white border border-slate-200 text-slate-600">${log.type || '-'}</span>
+                            </div>
+                            <div class="mt-1 text-xs text-gray-500">${log.timestamp || '-'}</div>
+                            <div class="mt-1 text-xs text-gray-500">${log.ip || '-'}</div>
+                            <div class="mt-1 text-xs text-gray-600 break-all">${log.detail || '-'}</div>
+                        </div>`).join('') : `
+                        <div class="rounded-lg border border-dashed border-gray-200 bg-gray-50 px-4 py-6 text-sm text-gray-400 text-center">
+                            표시할 접속 로그가 없습니다.
+                        </div>`}
+                </div>
+            </div>`;
+        },
+        getSecuritySeverityTone: (severity = '') => {
+            const safe = String(severity || '').toLowerCase();
+            if (safe === 'high') return 'bg-rose-100 text-rose-700 border-rose-200';
+            if (safe === 'warn') return 'bg-amber-100 text-amber-700 border-amber-200';
+            return 'bg-emerald-100 text-emerald-700 border-emerald-200';
+        },
+        renderAdminOpsSecurityLogPanel: () => {
+            const logs = Array.isArray(appData.securityLogs) ? appData.securityLogs.slice(0, 20) : [];
+            return `<div class="bg-white border border-gray-200 rounded-xl shadow-sm p-4">
+                <div class="flex items-center justify-between gap-3 mb-3">
+                    <div>
+                        <p class="text-sm font-bold text-gray-800">최근 보안 로그</p>
+                        <p class="text-xs text-gray-500">최근 20건만 표시합니다.</p>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <button onclick="app.downloadSecurityLogsCsv()" class="px-3 py-1.5 rounded-lg bg-rose-700 text-white text-xs font-bold hover:bg-rose-800">CSV 다운로드</button>
+                        <span class="text-[11px] font-bold text-slate-500">${logs.length}건</span>
+                    </div>
+                </div>
+                <div class="space-y-2 max-h-[420px] overflow-y-auto pr-1 custom-scrollbar">
+                    ${logs.length ? logs.map((log) => `
+                        <div class="rounded-lg border border-gray-200 bg-rose-50/40 px-3 py-2">
+                            <div class="flex items-center justify-between gap-2">
+                                <span class="text-sm font-bold text-gray-800">${log.userName || log.userId || '-'}</span>
+                                <span class="text-[11px] font-bold px-2 py-0.5 rounded-full border ${app.getSecuritySeverityTone(log.severity)}">${log.severity || 'info'}</span>
+                            </div>
+                            <div class="mt-1 text-xs font-semibold text-slate-700">${log.eventType || '-'}</div>
+                            <div class="mt-1 text-xs text-gray-500">${log.timestamp || '-'}</div>
+                            <div class="mt-1 text-xs text-gray-500">${log.ip || '-'}</div>
+                            <div class="mt-1 text-xs text-gray-600 break-all">${log.detail || '-'}</div>
+                        </div>`).join('') : `
+                        <div class="rounded-lg border border-dashed border-gray-200 bg-gray-50 px-4 py-6 text-sm text-gray-400 text-center">
+                            표시할 보안 로그가 없습니다.
+                        </div>`}
+                </div>
+            </div>`;
+        },
+        downloadAccessLogsCsv: async () => {
+            try {
+                const result = await db.downloadAccessLogsCsv();
+                const csv = String(result.csv || '');
+                if (!csv) throw new Error('CSV 내용이 비어 있습니다.');
+                const blob = new Blob([csv], { type: result.mimeType || 'text/csv;charset=utf-8' });
+                const url = URL.createObjectURL(blob);
+                const anchor = document.createElement('a');
+                anchor.href = url;
+                anchor.download = result.fileName || `accessLogs_${moment().format('YYYY-MM-DD_HHmmss')}.csv`;
+                document.body.appendChild(anchor);
+                anchor.click();
+                anchor.remove();
+                URL.revokeObjectURL(url);
+                alert(`접속 로그 CSV 다운로드 완료 (${result.rowCount || 0}건)`);
+            } catch (e) {
+                console.error(e);
+                alert('접속 로그 CSV 다운로드 오류: ' + e.message);
+            }
+        },
+        downloadSecurityLogsCsv: async () => {
+            try {
+                const result = await db.downloadSecurityLogsCsv();
+                const csv = String(result.csv || '');
+                if (!csv) throw new Error('CSV 내용이 비어 있습니다.');
+                const blob = new Blob([csv], { type: result.mimeType || 'text/csv;charset=utf-8' });
+                const url = URL.createObjectURL(blob);
+                const anchor = document.createElement('a');
+                anchor.href = url;
+                anchor.download = result.fileName || `securityLogs_${moment().format('YYYY-MM-DD_HHmmss')}.csv`;
+                document.body.appendChild(anchor);
+                anchor.click();
+                anchor.remove();
+                URL.revokeObjectURL(url);
+                alert(`보안 로그 CSV 다운로드 완료 (${result.rowCount || 0}건)`);
+            } catch (e) {
+                console.error(e);
+                alert('보안 로그 CSV 다운로드 오류: ' + e.message);
+            }
+        },
+        editAdminManualHoliday: (id) => {
+            app.adminOpsHolidayEditingId = security.cleanInlineValue(id);
+            app.renderMasterPermissionPage();
+        },
+        clearAdminHolidayEditor: () => {
+            app.adminOpsHolidayEditingId = '';
+            app.renderMasterPermissionPage();
+        },
+        saveAdminManualHoliday: async () => {
+            try {
+                const date = security.normalizeDate(document.getElementById('admin-holiday-date')?.value, '');
+                const name = security.cleanText(document.getElementById('admin-holiday-name')?.value || '');
+                if (!date) return alert('휴일 날짜를 선택해주세요.');
+                if (!name) return alert('휴일명을 입력해주세요.');
+                const editingId = security.cleanInlineValue(app.adminOpsHolidayEditingId || '');
+                const editingHoliday = (appData.manualHolidays || []).find((item) => String(item.id) === String(editingId)) || null;
+                const nextId = security.cleanInlineValue(date);
+                if (editingHoliday && editingHoliday.id && editingHoliday.id !== nextId) {
+                    await db.upsertManualHoliday({ id: nextId, date, name, enabled: true }, { keepOverlayOnSuccess: true });
+                    await db.deleteManualHoliday(editingHoliday.id);
+                } else {
+                    await db.upsertManualHoliday({ id: editingId || nextId, date, name, enabled: true }, { keepOverlayOnSuccess: true });
+                }
+                await db.loadBoot();
+                app.adminOpsHolidayEditingId = '';
+                app.adminOpsLoaded = false;
+                await app.loadAdminOpsPanelData({ force: true });
+                await app.logUserAction('AdminManualHolidaySave', `${date}:${name}`);
+                alert('수동 휴일 저장 완료');
+            } catch (e) {
+                console.error(e);
+                alert('수동 휴일 저장 오류: ' + e.message);
+            } finally {
+                const loadingEl = document.getElementById('loading-overlay');
+                if (loadingEl) loadingEl.style.display = 'none';
+                app.renderMasterPermissionPage();
+            }
+        },
+        deleteAdminManualHoliday: async (id) => {
+            const safeId = security.cleanInlineValue(id);
+            const holiday = (appData.manualHolidays || []).find((item) => String(item.id) === String(safeId));
+            if (!holiday) return alert('수동 휴일 정보를 찾을 수 없습니다.');
+            if (!confirm(`"${holiday.date} ${holiday.name}" 휴일을 삭제하시겠습니까?`)) return;
+            try {
+                await db.deleteManualHoliday(safeId);
+                await db.loadBoot();
+                app.adminOpsHolidayEditingId = '';
+                app.adminOpsLoaded = false;
+                await app.loadAdminOpsPanelData({ force: true });
+                await app.logUserAction('AdminManualHolidayDelete', `${holiday.date}:${holiday.name}`);
+                alert('수동 휴일 삭제 완료');
+            } catch (e) {
+                console.error(e);
+                alert('수동 휴일 삭제 오류: ' + e.message);
+            } finally {
+                const loadingEl = document.getElementById('loading-overlay');
+                if (loadingEl) loadingEl.style.display = 'none';
+                app.renderMasterPermissionPage();
+            }
+        },
+        syncAdminPublicHolidays: async () => {
+            const startInput = document.getElementById('admin-holiday-sync-start-year');
+            const endInput = document.getElementById('admin-holiday-sync-end-year');
+            const startYear = Number((startInput && startInput.value) || app.adminOpsHolidaySyncStartYear || new Date().getFullYear());
+            const endYear = Number((endInput && endInput.value) || app.adminOpsHolidaySyncEndYear || (new Date().getFullYear() + 1));
+            if (!Number.isInteger(startYear) || !Number.isInteger(endYear)) return alert('동기화 연도는 숫자로 입력해 주세요.');
+            if (startYear > endYear) return alert('시작연도는 종료연도보다 클 수 없습니다.');
+            if ((endYear - startYear) >= 3) {
+                if (!confirm(`선택한 범위(${startYear}~${endYear})의 자동 공휴일을 다시 동기화하시겠습니까?\n수동 휴일은 유지되고 선택 범위의 자동 공휴일만 갱신됩니다.`)) return;
+            } else {
+                if (!confirm(`${startYear}년부터 ${endYear}년까지 대한민국 공휴일을 다시 동기화하시겠습니까?\n수동 휴일은 유지되고 선택 범위의 자동 공휴일만 갱신됩니다.`)) return;
+            }
+            try {
+                app.adminOpsHolidaySyncStartYear = startYear;
+                app.adminOpsHolidaySyncEndYear = endYear;
+                const result = await db.syncPublicHolidays({ startYear, endYear });
+                await db.loadBoot();
+                app.adminOpsLoaded = false;
+                await app.loadAdminOpsPanelData({ force: true });
+                await app.logUserAction('AdminPublicHolidaySync', `${result.startYear}-${result.endYear}|auto:${result.autoCount}|company:${result.companyFixedCount}`);
+                alert(`공휴일 동기화 완료\n- 범위: ${result.startYear}~${result.endYear}\n- 자동 공휴일: ${result.autoCount}건\n- 창립기념일: ${result.companyFixedCount}건`);
+            } catch (e) {
+                console.error(e);
+                alert('공휴일 동기화 오류: ' + e.message);
+            } finally {
+                app.renderMasterPermissionPage();
+            }
+        },
+        renderAdminOpsHolidayPanel: () => {
+            const editingHoliday = (appData.manualHolidays || []).find((item) => String(item.id) === String(app.adminOpsHolidayEditingId)) || null;
+            const manualHolidays = Array.isArray(appData.manualHolidays) ? appData.manualHolidays : [];
+            const summary = appData.holidaySummary || { auto: 0, companyFixed: 0, manual: 0 };
+            return `<div class="bg-white border border-gray-200 rounded-xl shadow-sm p-4">
+                <div class="flex items-center justify-between gap-3 mb-3">
+                    <div>
+                        <p class="text-sm font-bold text-gray-800">수동 휴일 설정</p>
+                        <p class="text-xs text-gray-500">공공데이터 공휴일과 창립기념일을 제외한 회사 휴일만 수정합니다.</p>
+                    </div>
+                    <div class="flex flex-wrap justify-end items-center gap-2">
+                        <div class="flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-2">
+                            <input id="admin-holiday-sync-start-year" type="number" min="2020" max="2100" value="${Number(app.adminOpsHolidaySyncStartYear || new Date().getFullYear())}" class="w-20 rounded border border-emerald-200 bg-white px-2 py-1 text-xs text-gray-700">
+                            <span class="text-xs font-bold text-emerald-700">~</span>
+                            <input id="admin-holiday-sync-end-year" type="number" min="2020" max="2100" value="${Number(app.adminOpsHolidaySyncEndYear || (new Date().getFullYear() + 1))}" class="w-20 rounded border border-emerald-200 bg-white px-2 py-1 text-xs text-gray-700">
+                            <button onclick="app.syncAdminPublicHolidays()" class="px-3 py-1.5 rounded-lg bg-emerald-600 text-white text-xs font-bold hover:bg-emerald-700">공휴일 동기화</button>
+                        </div>
+                        <div class="flex flex-wrap justify-end gap-1.5 text-[11px]">
+                        <span class="px-2 py-1 rounded-full bg-slate-100 text-slate-700 font-bold">자동 ${summary.auto || 0}</span>
+                        <span class="px-2 py-1 rounded-full bg-emerald-100 text-emerald-700 font-bold">창립 ${summary.companyFixed || 0}</span>
+                        <span class="px-2 py-1 rounded-full bg-indigo-100 text-indigo-700 font-bold">수동 ${summary.manual || 0}</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="grid grid-cols-1 md:grid-cols-[160px_minmax(0,1fr)_auto] gap-2 mb-4">
+                    <input id="admin-holiday-date" type="date" value="${editingHoliday ? editingHoliday.date : ''}" class="border bg-gray-50 p-2.5 rounded-lg">
+                    <input id="admin-holiday-name" type="text" value="${editingHoliday ? editingHoliday.name : ''}" placeholder="예: 여름휴가, 전사 워크숍" class="border bg-gray-50 p-2.5 rounded-lg">
+                    <div class="flex gap-2">
+                        <button onclick="app.saveAdminManualHoliday()" class="px-4 py-2.5 rounded-lg bg-indigo-600 text-white text-sm font-bold hover:bg-indigo-700">${editingHoliday ? '수정 완료' : '휴일 저장'}</button>
+                        <button onclick="app.clearAdminHolidayEditor()" class="px-4 py-2.5 rounded-lg bg-gray-100 text-gray-700 text-sm font-bold hover:bg-gray-200">초기화</button>
+                    </div>
+                </div>
+                <div class="space-y-2 max-h-[320px] overflow-y-auto pr-1 custom-scrollbar">
+                    ${manualHolidays.length ? manualHolidays.map((holiday) => `
+                        <div class="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 flex items-center justify-between gap-3">
+                            <div class="min-w-0">
+                                <div class="text-sm font-bold text-gray-800">${holiday.name}</div>
+                                <div class="text-xs text-gray-500">${holiday.date}</div>
+                            </div>
+                            <div class="flex items-center gap-2 shrink-0">
+                                <button onclick="app.editAdminManualHoliday('${security.cleanInlineValue(holiday.id)}')" class="px-3 py-1.5 rounded-lg border border-indigo-200 text-indigo-600 text-xs font-bold hover:bg-indigo-50">수정</button>
+                                <button onclick="app.deleteAdminManualHoliday('${security.cleanInlineValue(holiday.id)}')" class="px-3 py-1.5 rounded-lg border border-red-200 text-red-600 text-xs font-bold hover:bg-red-50">삭제</button>
+                            </div>
+                        </div>`).join('') : `
+                        <div class="rounded-lg border border-dashed border-gray-200 bg-gray-50 px-4 py-6 text-sm text-gray-400 text-center">
+                            등록된 수동 휴일이 없습니다.
+                        </div>`}
+                </div>
+            </div>`;
+        },
+        deleteAdminManagedRequest: async (id) => {
+            const safeId = security.cleanInlineValue(id);
+            const req = (appData.requests || []).find((item) => String(item.id) === String(safeId));
+            if (!req) return alert('삭제할 연차 내역을 찾을 수 없습니다.');
+            const targetUser = app.ensureAdminOpsTargetUser();
+            const displayType = app.getRequestDisplayType(req);
+            const periodText = app.formatRequestPeriodText(req);
+            if (!confirm(`"${req.userName}"의 ${displayType} (${periodText}) 내역을 삭제하시겠습니까?`)) return;
+            try {
+                await db.deleteReq(safeId);
+                await app.logUserAction('AdminRequestDelete', `${safeId}:${req.userId}:${req.startDate}`);
+                alert('연차 내역 삭제 완료');
+            } catch (e) {
+                console.error(e);
+                alert('연차 내역 삭제 오류: ' + e.message);
+            } finally {
+                if (targetUser && String(app.adminOpsTargetUserId) !== String(targetUser.id)) {
+                    app.adminOpsTargetUserId = security.cleanInlineValue(targetUser.id);
+                }
+                app.renderMasterPermissionPage();
+            }
+        },
+        editAdminManagedRequest: (id) => {
+            const safeId = security.cleanInlineValue(id);
+            const req = (appData.requests || []).find((item) => String(item.id) === String(safeId));
+            if (!req) return alert('수정할 연차 내역을 찾을 수 없습니다.');
+            const targetUser = app.getAdminOpsTargetUsers().find((user) => String(user.id) === String(req.userId));
+            if (!targetUser) return alert('관리 가능한 대상 직원이 아닙니다.');
+            app.adminOpsTargetUserId = security.cleanInlineValue(targetUser.id);
+            app.openRequestModal(req.startDate, { adminMode: true, targetUserId: targetUser.id, editId: safeId, editMode: true });
+            const normalizedType = security.normalizeType(req.type);
+            const selectedTypeValue = app.getRequestEditSelectionValue(req);
+            app.refreshRequestTypeOptions(selectedTypeValue);
+            document.getElementById('req-type').value = selectedTypeValue;
+            const specialMode = document.getElementById('req-special-mode');
+            if (specialMode) {
+                specialMode.innerHTML = app.getSpecialModeOptionsHtml(normalizedType);
+                specialMode.value = normalizedType;
+            }
+            const sEl = document.getElementById('req-start-date');
+            const eEl = document.getElementById('req-end-date');
+            if (sEl) sEl.value = moment(req.startDate).format('YYYY-MM-DD');
+            if (eEl) eEl.value = moment(req.endDate).format('YYYY-MM-DD');
+            const allowPast = document.getElementById('allow-past');
+            if (allowPast) {
+                allowPast.checked = true;
+                app.togglePastDates();
+            }
+            document.getElementById('req-reason').value = req.reason;
+            document.getElementById('is-multi-day').checked = req.startDate !== req.endDate;
+            toggleInputs();
+            if (normalizedType === '시간차(퇴근)') {
+                const dEl = document.getElementById('req-duration-timeoff');
+                if (dEl && Number(req.hours) >= 1 && Number(req.hours) <= 7) dEl.value = String(Number(req.hours));
+                app.syncRequestTypeDefaults();
+            } else if (req.timeRange && req.timeRange.includes('~')) {
+                const [rawStart, rawEnd] = String(req.timeRange).split('~');
+                const startHour = parseInt(rawStart, 10);
+                const endHour = parseInt(rawEnd, 10);
+                if (Number.isFinite(startHour) && Number.isFinite(endHour) && endHour > startHour) {
+                    const duration = timeLogic.getEff(startHour, endHour);
+                    if (normalizedType === '시간차(외출)') {
+                        const dEl = document.getElementById('req-duration-out');
+                        const tEl = document.getElementById('req-start-time-out');
+                        if (dEl && duration >= 1 && duration <= 10) dEl.value = String(duration);
+                        if (tEl) tEl.value = String(startHour);
+                        updateOutPreview();
+                    }
+                }
+            }
+            document.getElementById('req-modal-title').innerText = '관리자 대리 수정';
+            document.getElementById('req-modal-btn').innerText = '수정 완료';
+            document.getElementById('req-modal').classList.remove('hidden');
+        },
+        renderAdminOpsProxyPanel: () => {
+            const targetUser = app.ensureAdminOpsTargetUser();
+            if (!targetUser) {
+                return `<div class="bg-white border border-gray-200 rounded-xl shadow-sm p-5">
+                    <p class="text-sm font-bold text-gray-800 mb-1">달력 기반 대리 등록/삭제</p>
+                    <p class="text-sm text-gray-500">관리 가능한 직원이 없습니다.</p>
+                </div>`;
+            }
+            const monthStart = moment({ year: app.adminOpsViewYear, month: app.adminOpsViewMonth, day: 1 });
+            const safeSelectedDate = security.normalizeDate(
+                app.adminOpsSelectedDate,
+                monthStart.format('YYYY-MM-DD')
+            );
+            app.adminOpsSelectedDate = safeSelectedDate;
+            const calendarData = app.buildAdminOpsCalendarData(targetUser, app.adminOpsViewYear, app.adminOpsViewMonth);
+            const selectedRequests = app.getAdminOpsRequestsForDate(safeSelectedDate, targetUser);
+            let html = `<div class="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden">
+                <div class="p-4 border-b border-gray-200 bg-gray-50/70">
+                    <div class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
+                        <div>
+                            <p class="text-sm font-bold text-gray-800">달력 기반 대리 등록/삭제</p>
+                            <p class="text-xs text-gray-500">대상 직원을 고르고 날짜를 클릭해 누락된 연차를 보정합니다. 날짜 더블클릭 또는 버튼으로 등록창을 엽니다.</p>
+                        </div>
+                        <div class="flex flex-wrap items-center gap-2">
+                            <label class="text-xs text-gray-500">대상 직원</label>
+                            <select class="border bg-white rounded-lg px-3 py-2 text-sm font-bold text-gray-700" onchange="app.setAdminOpsTargetUser(this.value)">
+                                ${app.getAdminOpsTargetUsers().map((user) => `<option value="${security.cleanInlineValue(user.id)}" ${String(user.id) === String(app.adminOpsTargetUserId) ? 'selected' : ''}>${user.name} (${user.dept})</option>`).join('')}
+                            </select>
+                            <button onclick="app.openAdminProxyRequestModal('${safeSelectedDate}')" class="px-4 py-2 rounded-lg bg-indigo-600 text-white text-sm font-bold hover:bg-indigo-700">선택 날짜로 대리 등록</button>
+                        </div>
+                    </div>
+                </div>
+                <div class="px-4 py-3 border-b border-gray-200 flex items-center">
+                    <button onclick="app.changeAdminOpsMonth(-1)" class="w-10 h-10 rounded-full hover:bg-gray-100 flex items-center justify-center transition"><i class="fa-solid fa-chevron-left text-gray-600"></i></button>
+                    <h3 class="text-xl font-bold text-gray-800 mx-4">${app.adminOpsViewYear}년 ${app.adminOpsViewMonth + 1}월 <span class="text-sm font-normal text-gray-500">(${targetUser.name})</span></h3>
+                    <button onclick="app.changeAdminOpsMonth(1)" class="w-10 h-10 rounded-full hover:bg-gray-100 flex items-center justify-center transition"><i class="fa-solid fa-chevron-right text-gray-600"></i></button>
+                </div>
+                <div class="calendar-grid">
+                    <div class="calendar-header-cell text-red-500">일</div><div class="calendar-header-cell">월</div><div class="calendar-header-cell">화</div><div class="calendar-header-cell">수</div><div class="calendar-header-cell">목</div><div class="calendar-header-cell">금</div><div class="calendar-header-cell text-blue-500">토</div>`;
+            const firstDayIdx = new Date(app.adminOpsViewYear, app.adminOpsViewMonth, 1).getDay();
+            const lastDate = new Date(app.adminOpsViewYear, app.adminOpsViewMonth + 1, 0).getDate();
+            for (let i = 0; i < firstDayIdx; i++) html += `<div class="calendar-cell bg-gray-50/50"></div>`;
+            for (let d = 1; d <= lastDate; d++) {
+                const dateStr = `${app.adminOpsViewYear}-${String(app.adminOpsViewMonth + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+                const today = moment().startOf('day');
+                const curDate = moment(dateStr);
+                const isToday = curDate.isSame(today, 'day');
+                const isSelected = safeSelectedDate === dateStr;
+                const isRed = holidayLogic.isRedDay(dateStr);
+                const isSat = holidayLogic.isSat(dateStr);
+                const holName = holidayLogic.getHolName(dateStr);
+                const events = calendarData.eventMap[dateStr] || [];
+                const eventHtml = events.slice(0, 4).map((req) => {
+                    const isRejected = req.status === 'rejected';
+                    const isCancelled = req.status === 'cancelled';
+                    const isPending = req.status === 'pending';
+                    let tone = 'bg-emerald-100 text-emerald-800 border-emerald-300';
+                    if (isRejected) tone = 'bg-red-100 text-red-700 border-red-300';
+                    else if (isCancelled) tone = 'bg-gray-100 text-gray-500 border-gray-300';
+                    else if (isPending) tone = 'bg-amber-100 text-amber-800 border-amber-300';
+                    return `<div class="text-[10px] px-1 py-0.5 rounded border truncate ${tone}">${app.getRequestDisplayType(req)}</div>`;
+                }).join('');
+                const moreHtml = events.length > 4 ? `<div class="text-[10px] text-gray-400">+${events.length - 4}건</div>` : '';
+                html += `<div class="calendar-cell hover:bg-gray-50 ${isToday ? 'calendar-cell-today' : ''} ${isSelected ? 'calendar-cell-selected' : ''}" onclick="app.setAdminOpsSelectedDate('${dateStr}')" ondblclick="app.openAdminProxyRequestModal('${dateStr}')">
+                    <div class="flex justify-between items-start mb-1">
+                        <span class="text-sm font-bold ml-1 mt-1 ${isToday ? 'today-circle' : (isRed ? 'holiday-text' : (isSat ? 'sat-text' : 'text-gray-700'))}">${d}</span>
+                        ${holName ? `<span class="text-[10px] text-white bg-red-400 px-1 rounded truncate max-w-[68px]">${holName}</span>` : ''}
+                    </div>
+                    <div class="space-y-1 px-1 max-h-[86px] overflow-hidden">${eventHtml}${moreHtml}</div>
+                </div>`;
+            }
+            html += `</div>
+                <div class="p-4 border-t border-gray-200 bg-white">
+                    <div class="flex items-center justify-between gap-3 mb-3">
+                        <div>
+                            <p class="text-sm font-bold text-gray-800">${safeSelectedDate} / ${targetUser.name}</p>
+                            <p class="text-xs text-gray-500">선택 날짜에 걸친 연차 내역입니다. 잘못된 데이터는 여기서 바로 삭제할 수 있습니다.</p>
+                        </div>
+                        <button onclick="app.openAdminProxyRequestModal('${safeSelectedDate}')" class="px-4 py-2 rounded-lg bg-indigo-50 text-indigo-700 text-sm font-bold border border-indigo-100 hover:bg-indigo-100">이 날짜에 등록</button>
+                    </div>
+                    <div class="space-y-2">
+                        ${selectedRequests.length ? selectedRequests.map((req) => {
+                            const statusLabel = req.status === 'approved' ? '승인' : (req.status === 'pending' ? '대기' : (req.status === 'rejected' ? '반려' : (req.status === 'cancel_requested' ? '취소요청' : '취소')));
+                            const statusTone = req.status === 'approved'
+                                ? 'bg-emerald-100 text-emerald-700'
+                                : (req.status === 'pending'
+                                    ? 'bg-amber-100 text-amber-800'
+                                    : (req.status === 'rejected'
+                                        ? 'bg-red-100 text-red-700'
+                                        : 'bg-gray-100 text-gray-600'));
+                            return `<div class="rounded-lg border border-gray-200 bg-gray-50 px-3 py-3 flex items-center justify-between gap-3">
+                                <div class="min-w-0">
+                                    <div class="flex items-center gap-2 flex-wrap">
+                                        <span class="font-bold text-gray-800">${app.getRequestDisplayType(req)}</span>
+                                        <span class="px-2 py-0.5 rounded-full text-[11px] font-bold ${statusTone}">${statusLabel}</span>
+                                    </div>
+                                    <div class="mt-1 text-xs text-gray-500">${app.formatRequestPeriodText(req)}</div>
+                                    <div class="mt-1 text-xs text-gray-600">${req.reason || '-'}</div>
+                                    ${req.detailReason ? `<div class="mt-1 text-xs text-amber-600">상세사유: ${req.detailReason}</div>` : ''}
+                                </div>
+                                <div class="shrink-0 flex items-center gap-2">
+                                    <button onclick="app.editAdminManagedRequest('${security.cleanInlineValue(req.id)}')" class="px-3 py-1.5 rounded-lg border border-indigo-200 text-indigo-600 text-xs font-bold hover:bg-indigo-50">수정</button>
+                                    <button onclick="app.deleteAdminManagedRequest('${security.cleanInlineValue(req.id)}')" class="px-3 py-1.5 rounded-lg border border-red-200 text-red-600 text-xs font-bold hover:bg-red-50">삭제</button>
+                                </div>
+                            </div>`;
+                        }).join('') : `<div class="rounded-lg border border-dashed border-gray-200 bg-gray-50 px-4 py-6 text-sm text-gray-400 text-center">선택 날짜에 등록된 연차 내역이 없습니다.</div>`}
+                    </div>
+                </div>
+            </div>`;
+            return html;
+        },
+        renderAdminOpsPanel: () => {
+            const targetUser = app.ensureAdminOpsTargetUser();
+            const safeSelectedDate = security.normalizeDate(app.adminOpsSelectedDate, moment({ year: app.adminOpsViewYear, month: app.adminOpsViewMonth, day: 1 }).format('YYYY-MM-DD'));
+            app.adminOpsSelectedDate = safeSelectedDate;
+            return `<div class="space-y-4">
+                <div class="bg-white border border-gray-200 rounded-xl shadow-sm p-4">
+                    <p class="text-sm font-bold text-gray-800">운영실</p>
+                    <p class="text-sm text-gray-600">접속 로그 확인, 달력 기반 대리 등록/삭제, 수동 휴일 설정을 한 곳에서 처리합니다.</p>
+                    <div class="mt-3 flex flex-wrap gap-2 text-[11px]">
+                        <span class="px-2 py-1 rounded-full bg-slate-100 text-slate-700 font-bold">대상 직원 ${targetUser ? 1 : 0}명 선택</span>
+                        <span class="px-2 py-1 rounded-full bg-indigo-100 text-indigo-700 font-bold">선택 날짜 ${safeSelectedDate || '-'}</span>
+                        <span class="px-2 py-1 rounded-full bg-emerald-100 text-emerald-700 font-bold">접속 로그 ${(appData.accessLogs || []).length}건 로드</span>
+                        <span class="px-2 py-1 rounded-full bg-rose-100 text-rose-700 font-bold">보안 로그 ${(appData.securityLogs || []).length}건 로드</span>
+                    </div>
+                </div>
+                <div class="grid grid-cols-1 gap-4">
+                    <div class="space-y-4">
+                        ${app.renderAdminOpsProxyPanel()}
+                        ${app.renderAdminOpsHolidayPanel()}
+                    </div>
+                    <div class="space-y-4">
+                        ${app.renderAdminOpsLogPanel()}
+                        ${app.renderAdminOpsSecurityLogPanel()}
+                    </div>
+                </div>
+            </div>`;
         },
         getApproverUser: (requester = app.currentUser) => {
             if (!requester) return null;
@@ -1476,6 +2375,7 @@
                 app.boardEditingId = null;
                 app.selectedBoardId = null;
                 app.unloadLogged = false;
+                appData.meta.situationBoardLoaded = false;
                 app.calendarRenderCache = null;
                 app.markActivity({ force: true });
                 app.startIdleWatch();
@@ -1573,6 +2473,7 @@
         
         togglePwVisibility: (el) => {
             const type = el.checked ? 'text' : 'password';
+            document.getElementById('pw-current').type = type;
             document.getElementById('pw-new').type = type;
             document.getElementById('pw-confirm').type = type;
         },
@@ -1590,8 +2491,9 @@
         },
 
         renderLogin: () => {
+            app.setLoginScreenLayout(true);
             document.getElementById('app-container').innerHTML = `
-            <div class="flex flex-col items-center justify-center min-h-[calc(100vh-160px)] px-4">
+            <div class="flex flex-col items-center justify-center min-h-[calc(100vh-250px)] md:min-h-[calc(100vh-230px)] px-4">
                 <div class="bg-white p-8 rounded-2xl shadow-xl w-full max-w-sm border border-gray-100">
                     <div class="text-center mb-8">
                         <i class="fa-solid fa-calendar-check text-indigo-600 text-5xl mb-4"></i>
@@ -1681,18 +2583,8 @@
             const timeRangeClass = r.timeRange
                 ? 'inline-flex justify-center text-sm font-bold text-gray-500 bg-gray-100 px-2 py-0.5 rounded'
                 : 'inline-flex justify-center text-sm font-bold text-gray-200 bg-gray-50 px-2 py-0.5 rounded opacity-0';
-            const statusText = r.status === 'pending'
-                ? '승인 대기'
-                : (r.status === 'approved'
-                    ? '승인 완료'
-                    : (r.status === 'rejected'
-                        ? '반려됨'
-                        : (r.status === 'cancel_requested' ? '취소 요청중' : '취소됨')));
-            const statusClass = r.status === 'approved'
-                ? 'bg-green-100 text-green-700'
-                : (r.status === 'rejected'
-                    ? 'bg-red-100 text-red-700'
-                    : (r.status === 'pending' ? 'bg-yellow-100 text-yellow-700' : 'bg-gray-200 text-gray-500'));
+            const statusText = app.getRequestStatusText(r.status);
+            const statusClass = app.getRequestStatusClasses(r.status);
 
             if (app.isMobileViewport) {
                 return `<div class="p-4 border-b last:border-0 hover:bg-gray-50">
@@ -1730,7 +2622,25 @@
             const pagedReqs = requests.slice(startIdx, startIdx + pageSize);
             const paginationWrapClass = String(options.paginationWrapClass || 'flex justify-end items-center mt-3 px-1 space-x-2');
             const sectionClass = String(options.sectionClass || '');
-            return `<div class="mb-8"><div class="flex justify-between items-center mb-4 px-1"><h3 class="text-lg font-bold text-gray-800">${title}</h3>${app.renderRequestPageSizeControl()}</div><div class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden ${sectionClass}">${totalItems === 0 ? `<div class="p-8 text-center text-gray-400">${emptyText}</div>` : pagedReqs.map((r) => app.renderRecentRequestRow(r)).join('')}</div>${totalItems > 0 ? `<div class="${paginationWrapClass}"><button ${app.currentPage === 1 ? 'disabled' : ''} onclick="app.changePage(${app.currentPage - 1})" class="px-3 py-1 rounded border ${app.currentPage === 1 ? 'bg-gray-100 text-gray-400' : 'bg-white hover:bg-gray-50 text-gray-600'}">이전</button><span class="text-sm text-gray-600 font-medium">${app.currentPage} / ${totalPages}</span><button ${app.currentPage === totalPages ? 'disabled' : ''} onclick="app.changePage(${app.currentPage + 1})" class="px-3 py-1 rounded border ${app.currentPage === totalPages ? 'bg-gray-100 text-gray-400' : 'bg-white hover:bg-gray-50 text-gray-600'}">다음</button></div>` : ''}</div>`;
+            if (!app.isMobileViewport) {
+                return `<div class="mb-8"><div class="flex justify-between items-center mb-4 px-1"><h3 class="text-lg font-bold text-gray-800">${title}</h3>${app.renderRequestPageSizeControl()}</div><div class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden ${sectionClass}">${totalItems === 0 ? `<div class="p-8 text-center text-gray-400">${emptyText}</div>` : pagedReqs.map((r) => app.renderRecentRequestRow(r)).join('')}</div>${totalItems > 0 ? `<div class="${paginationWrapClass}"><button ${app.currentPage === 1 ? 'disabled' : ''} onclick="app.changePage(${app.currentPage - 1})" class="px-3 py-1 rounded border ${app.currentPage === 1 ? 'bg-gray-100 text-gray-400' : 'bg-white hover:bg-gray-50 text-gray-600'}">이전</button><span class="text-sm text-gray-600 font-medium">${app.currentPage} / ${totalPages}</span><button ${app.currentPage === totalPages ? 'disabled' : ''} onclick="app.changePage(${app.currentPage + 1})" class="px-3 py-1 rounded border ${app.currentPage === totalPages ? 'bg-gray-100 text-gray-400' : 'bg-white hover:bg-gray-50 text-gray-600'}">다음</button></div>` : ''}</div>`;
+            }
+            const isOpen = !!app.mobileRecentRequestsOpen;
+            return `<div class="mb-8 bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden ${sectionClass}">
+                <div class="px-4 py-4 bg-gray-50/70">
+                    <button onclick="app.toggleMobileRecentRequestsOpen()" class="w-full flex items-center justify-between gap-3 text-left">
+                        <div class="min-w-0">
+                            <h3 class="text-base font-bold text-gray-800 flex items-center"><i class="fa-regular fa-rectangle-list mr-2 text-indigo-600"></i>${title}</h3>
+                            <p class="mt-1 text-xs text-gray-500">${totalItems}건</p>
+                        </div>
+                        <div class="flex items-center gap-2 shrink-0">
+                            <span class="text-xs font-bold text-indigo-700">${isOpen ? '접기' : '펼치기'}</span>
+                            <i class="fa-solid ${isOpen ? 'fa-chevron-up' : 'fa-chevron-down'} text-xs text-indigo-600"></i>
+                        </div>
+                    </button>
+                </div>
+                ${isOpen ? `<div class="px-4 pt-3">${app.renderRequestPageSizeControl()}</div><div class="overflow-hidden">${totalItems === 0 ? `<div class="p-8 text-center text-gray-400">${emptyText}</div>` : pagedReqs.map((r) => app.renderRecentRequestRow(r)).join('')}</div>${totalItems > 0 ? `<div class="${paginationWrapClass} pb-4"><button ${app.currentPage === 1 ? 'disabled' : ''} onclick="app.changePage(${app.currentPage - 1})" class="px-3 py-1 rounded border ${app.currentPage === 1 ? 'bg-gray-100 text-gray-400' : 'bg-white hover:bg-gray-50 text-gray-600'}">이전</button><span class="text-sm text-gray-600 font-medium">${app.currentPage} / ${totalPages}</span><button ${app.currentPage === totalPages ? 'disabled' : ''} onclick="app.changePage(${app.currentPage + 1})" class="px-3 py-1 rounded border ${app.currentPage === totalPages ? 'bg-gray-100 text-gray-400' : 'bg-white hover:bg-gray-50 text-gray-600'}">다음</button></div>` : ''}` : ''}
+            </div>`;
         },
         isMobileMemberSectionOpen: (deptName) => !!app.mobileMemberStatusOpen[security.cleanInlineValue(deptName || '')],
         toggleMobileMemberSection: (deptName) => {
@@ -1808,6 +2718,7 @@
             const isMaster = app.currentUser.role === 'master';
             const canManageUsers = app.hasUserManagePermission();
             const canAccessMasterPermission = app.hasMasterPermissionAccess();
+            const canAccessAdminOps = app.hasAdminOpsAccess();
             const canAccessSituationBoard = app.canAccessSituationBoard();
             const boardEnabled = app.isBoardFeatureEnabled();
             const boardBtn = boardEnabled ? `<button onclick="app.openBoardPage()" class="text-sm ${app.currentView==='board' ? 'bg-blue-700' : 'bg-blue-600'} text-white px-3 py-2 rounded-lg font-bold">게시판</button>` : '';
@@ -1815,19 +2726,57 @@
             const homeBtn = app.currentView !== 'dashboard'
                 ? `<button onclick="app.backToDashboard()" class="text-sm bg-white border px-3 py-2 rounded-lg font-bold">홈</button>`
                 : '';
-            const masterBtn = canAccessMasterPermission ? `<button onclick="app.renderMasterPermissionPage()" class="text-sm bg-purple-600 text-white px-3 py-2 rounded-lg font-bold">권한/설정</button>` : '';
+            const masterBtn = canAccessAdminOps ? `<button onclick="app.renderMasterPermissionPage()" class="text-sm bg-purple-600 text-white px-3 py-2 rounded-lg font-bold">권한/설정</button>` : '';
             const manageBtn = canManageUsers ? `<button onclick="app.renderUserManagement()" class="text-sm bg-indigo-600 text-white px-3 py-2 rounded-lg font-bold">구성원 관리</button>` : '';
             const pwBtn = `<button onclick="document.getElementById('pw-modal').classList.remove('hidden')" class="text-sm bg-white border px-3 py-2 rounded-lg">비번변경</button>`;
             const logoutBtn = `<button onclick="app.logout()" class="text-sm bg-gray-800 text-white px-4 py-2 rounded-lg font-bold">로그아웃</button>`;
             const profileHtml = `<div class="text-right"><p class="text-sm font-bold">${app.currentUser.name} <span class="text-xs text-gray-500">${app.currentUser.rank||''}</span>${isMaster?'<span class="text-[10px] bg-red-600 text-white px-1 rounded ml-1">MASTER</span>':''}</p><p class="text-xs text-gray-500">${app.currentUser.dept}</p></div>`;
-            const actionsHtml = [boardBtn, situationBtn, homeBtn, masterBtn, manageBtn, pwBtn, logoutBtn].filter(Boolean).join('');
+            const actions = [boardBtn, situationBtn, homeBtn, masterBtn, manageBtn, pwBtn, logoutBtn].filter(Boolean);
+            const actionsHtml = actions.join('');
 
             if (app.isMobileViewport) {
-                el.innerHTML = `<div class="w-full flex flex-col items-end gap-2 py-2"><div>${profileHtml}</div><div class="flex flex-wrap justify-end gap-2">${actionsHtml}</div></div>`;
+                const mobileOptions = [];
+                if (boardEnabled) mobileOptions.push({ value: 'board', label: '게시판' });
+                if (canAccessSituationBoard) mobileOptions.push({ value: 'situation-board', label: '전체 상황판' });
+                if (app.currentView !== 'dashboard') mobileOptions.push({ value: 'home', label: '홈' });
+                if (canAccessAdminOps) mobileOptions.push({ value: 'master-permissions', label: '권한/설정' });
+                if (canManageUsers) mobileOptions.push({ value: 'user-management', label: '구성원 관리' });
+                mobileOptions.push({ value: 'password', label: '비번변경' });
+                mobileOptions.push({ value: 'logout', label: '로그아웃' });
+                const isOpen = !!app.mobileNavMenuOpen;
+                el.innerHTML = `<div class="relative">
+                    <button type="button" onclick="app.toggleMobileNavMenu(); event.stopPropagation();" class="flex items-start justify-end gap-3 text-right relative z-10">
+                        <div>${profileHtml}</div>
+                        <div class="w-8 h-8 rounded-full border border-gray-200 bg-gray-50 flex items-center justify-center text-gray-500 mt-0.5 shrink-0">
+                            <i class="fa-solid ${isOpen ? 'fa-chevron-up' : 'fa-chevron-down'} text-xs"></i>
+                        </div>
+                    </button>
+                    <div class="${isOpen ? 'block' : 'hidden'} absolute right-0 top-full mt-2 w-[172px] z-40" onclick="event.stopPropagation()">
+                        <div class="bg-white border border-gray-200 rounded-2xl shadow-xl overflow-hidden">
+                            ${mobileOptions.map((item) => `<button type="button" onclick="app.handleMobileNavAction('${item.value}')" class="w-full text-left px-4 py-3 text-sm font-bold text-gray-700 hover:bg-gray-50 border-b last:border-b-0 border-gray-100">${item.label}</button>`).join('')}
+                        </div>
+                    </div>
+                </div>`;
                 return;
             }
 
             el.innerHTML = `<div class="flex items-center"><div class="mr-3">${profileHtml}</div><div class="flex items-center gap-2">${actionsHtml}</div></div>`;
+        },
+        handleMobileNavAction: (action) => {
+            const safeAction = String(action || '').trim();
+            if (!safeAction) return;
+            app.mobileNavMenuOpen = false;
+            if (safeAction === 'board') return app.openBoardPage();
+            if (safeAction === 'situation-board') return app.openSituationBoard();
+            if (safeAction === 'home') return app.backToDashboard();
+            if (safeAction === 'master-permissions') return app.renderMasterPermissionPage();
+            if (safeAction === 'user-management') return app.renderUserManagement();
+            if (safeAction === 'password') return document.getElementById('pw-modal')?.classList.remove('hidden');
+            if (safeAction === 'logout') return app.logout();
+        },
+        toggleMobileNavMenu: () => {
+            app.mobileNavMenuOpen = !app.mobileNavMenuOpen;
+            app.renderNav();
         },
 
         // [수정] recalcUsedHours: 승인 대기 시간도 계산하도록 수정
@@ -1839,6 +2788,7 @@
                 const u = usersById.get(String(r.userId));
                 if (u) { 
                     if (app.isSpecialLeaveRequest(r)) return;
+                    if (app.isWorkReportRequest(r)) return;
                     if (['approved', 'cancel_requested'].includes(r.status)) {
                         u.usedHours += Number(r.hours); 
                     } else if (r.status === 'pending') {
@@ -1921,6 +2871,8 @@
                     app.boardEditingId = null;
                     app.selectedBoardId = null;
                     appData.meta.requestsLoaded = false;
+                    appData.meta.boardPostsLoaded = false;
+                    appData.meta.situationBoardLoaded = false;
                     app.calendarRenderCache = null;
                     app.unloadLogged = false;
                     app.markActivity({ force: true });
@@ -1977,7 +2929,22 @@
                     app.renderNav();
                     app.refreshDashboard();
                 } else {
-                    alert(db.getApiErrorMessage(json.message, "아이디/비밀번호 확인"));
+                    const rawMessage = String((json && json.message) || '');
+                    let loginMessage = db.getApiErrorMessage(rawMessage, "아이디/비밀번호 확인");
+                    if (rawMessage === 'LOGIN_INVALID') {
+                        const failCount = Number(json.failCount || 0);
+                        const failLimit = Number(json.failLimit || 5);
+                        if (failCount > 0 && failLimit > 0) {
+                            loginMessage = `아이디 또는 비밀번호가 올바르지 않습니다. (${failCount}/${failLimit})`;
+                        } else {
+                            loginMessage = '아이디 또는 비밀번호가 올바르지 않습니다.';
+                        }
+                    } else if (rawMessage === 'LOGIN_BLOCKED') {
+                        const retryAfterSec = Math.max(0, Number(json.retryAfterSec || 0));
+                        const remainMinutes = Math.max(1, Math.ceil(retryAfterSec / 60));
+                        loginMessage = `비밀번호를 5회 잘못 입력해 로그인할 수 없습니다. 약 ${remainMinutes}분 후 다시 시도해 주세요.`;
+                    }
+                    alert(loginMessage);
                 }
             } catch(e) { console.error(e); alert(db.getApiErrorMessage((e && e.message) || '', db.getScriptErrorMessage ? db.getScriptErrorMessage(e) : "서버 통신 오류")); } finally { app.hideLoadingOverlay(); }
         },
@@ -2022,11 +2989,15 @@
         },
 
         changePassword: async () => {
+            const currentPw = document.getElementById('pw-current').value.trim();
             const newPw = document.getElementById('pw-new').value.trim();
             const cfmPw = document.getElementById('pw-confirm').value.trim();
 
             if (!app.currentUser) {
                 return alert('로그인이 필요합니다.');
+            }
+            if(!currentPw) {
+                return alert('현재 비밀번호를 입력하세요.');
             }
             if(!newPw || newPw !== cfmPw) {
                 return alert('새 비밀번호가 일치하지 않거나 비어있습니다.');
@@ -2039,7 +3010,7 @@
                 document.getElementById('loading-text').innerText = '비밀번호 저장 중...';
                 document.getElementById('loading-overlay').style.display = 'flex';
                 const json = await db.postJsonWithRetry(
-                    { action: 'change_password', newPassword: newPw, actor: db.getActor() },
+                    { action: 'change_password', currentPassword: currentPw, newPassword: newPw, actor: db.getActor() },
                     { retries: 6, baseDelayMs: 250, maxRetryWaitMs: 5000 }
                 );
                 if (!json || json.result !== 'success') {
@@ -2050,6 +3021,7 @@
                     throw new Error(db.getApiErrorMessage(msg, '비밀번호 저장 실패'));
                 }
 
+                document.getElementById('pw-current').value = '';
                 document.getElementById('pw-new').value = '';
                 document.getElementById('pw-confirm').value = '';
                 await app.logUserAction('PasswordChange', 'self_password_changed');
@@ -2063,11 +3035,25 @@
             }
         },
 
-        openBoardPage: () => {
+        ensureBoardPostsLoaded: async () => {
+            if (appData.meta.boardPostsLoaded) return true;
+            try {
+                const result = await db.loadBoardPosts();
+                return !!(result && result.ok);
+            } catch (e) {
+                console.error(e);
+                alert('게시판 데이터 로드 실패: ' + (e.message || '서버 상태를 확인하세요.'));
+                return false;
+            }
+        },
+
+        openBoardPage: async () => {
             if (!app.isBoardFeatureEnabled()) {
                 alert('게시판 기능이 꺼져 있습니다.');
                 return;
             }
+            const loaded = await app.ensureBoardPostsLoaded();
+            if (!loaded) return;
             app.currentView = 'board';
             app.currentPage = 1;
             app.renderNav();
@@ -2321,6 +3307,7 @@
         },
 
         refreshDashboard: () => {
+            app.setLoginScreenLayout(false);
             if(!app.currentUser) return app.renderLogin();
             if (app.currentView === 'board') return app.renderBoardPage();
             if (app.currentView === 'situation-board') return app.renderSituationBoard();
@@ -2357,6 +3344,77 @@
             document.querySelectorAll('.calendar-cell[data-cal-date]').forEach((cell) => {
                 cell.classList.toggle('calendar-cell-selected', cell.dataset.calDate === app.selectedCalendarDate);
             });
+        },
+        getCalendarDayEvents: (dateStr, viewer = app.currentUser) => {
+            if (!viewer) return [];
+            const safeDate = security.normalizeDate(dateStr, '');
+            if (!safeDate) return [];
+            const calendarData = app.buildMonthlyCalendarData(appData.requests, viewer, app.viewYear, app.viewMonth);
+            return (calendarData.eventMap[safeDate] || []).slice().sort((a, b) => {
+                const pA = app.getRequestTypePriority(a);
+                const pB = app.getRequestTypePriority(b);
+                if (pA !== pB) return pA - pB;
+                return String(a.userName || '').localeCompare(String(b.userName || ''), 'ko');
+            });
+        },
+        renderMobileCalendarDaySummary: (events) => {
+            const count = Array.isArray(events) ? events.length : 0;
+            if (count <= 0) return '';
+            return `<div class="mt-2 flex items-center justify-center"><span class="inline-flex items-center justify-center px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700 text-[10px] font-bold">${count}건</span></div>`;
+        },
+        renderMobileCalendarDayDetailContent: (dateStr) => {
+            const safeDate = security.normalizeDate(dateStr, '');
+            if (!safeDate || !app.currentUser) {
+                return `<div class="p-5 text-sm text-gray-400">날짜를 확인할 수 없습니다.</div>`;
+            }
+            const daysEvents = app.getCalendarDayEvents(safeDate, app.currentUser);
+            const dateLabel = moment(safeDate).format('YYYY년 M월 D일 ddd');
+            if (daysEvents.length === 0) {
+                return `<div class="p-5"><div class="text-lg font-bold text-gray-900">${dateLabel}</div><div class="mt-4 rounded-xl border border-dashed border-gray-200 bg-gray-50 px-4 py-6 text-sm text-gray-400 text-center">해당 날짜의 상세 내역이 없습니다.</div></div>`;
+            }
+            return `<div class="p-5">
+                <div class="text-lg font-bold text-gray-900">${dateLabel}</div>
+                <div class="mt-4 space-y-3">
+                    ${daysEvents.map((e) => {
+                        const displayType = app.getRequestDisplayType(e);
+                        const timeText = e.timeRange ? `<div class="text-xs text-gray-500 mt-1">${e.timeRange}</div>` : '';
+                        const detailReason = e.detailReason ? `<div class="text-xs text-amber-600 mt-1">상세사유: ${security.cleanText(e.detailReason)}</div>` : '';
+                        const rejectReason = e.status === 'rejected' && e.rejectReason ? `<div class="text-xs text-red-600 mt-1">반려사유: ${security.cleanText(e.rejectReason)}</div>` : '';
+                        return `<div class="rounded-xl border border-gray-200 bg-white px-4 py-3 shadow-sm">
+                            <div class="flex items-start justify-between gap-3">
+                                <div class="min-w-0">
+                                    <div class="font-bold text-gray-900">${e.userName}</div>
+                                    <div class="text-xs text-gray-500 mt-1">${displayType} · ${security.cleanText(e.reason || '-')}</div>
+                                    ${timeText}
+                                    ${detailReason}
+                                    ${rejectReason}
+                                </div>
+                                <span class="shrink-0 px-2.5 py-1 rounded-full text-[11px] font-bold ${app.getRequestStatusClasses(e.status)}">${app.getRequestStatusText(e.status)}</span>
+                            </div>
+                        </div>`;
+                    }).join('')}
+                </div>
+            </div>`;
+        },
+        openMobileCalendarDayDetail: (dateStr) => {
+            const safeDate = security.normalizeDate(dateStr, '');
+            if (!safeDate) return;
+            app.selectedCalendarDate = safeDate;
+            app.mobileCalendarDetailDate = safeDate;
+            app.updateSelectedCalendarDateUI();
+            const body = document.getElementById('mobile-calendar-detail-body');
+            if (body) body.innerHTML = app.renderMobileCalendarDayDetailContent(safeDate);
+            document.body.style.overflow = 'hidden';
+            document.getElementById('mobile-calendar-detail-modal')?.classList.remove('hidden');
+        },
+        closeMobileCalendarDayDetail: () => {
+            app.mobileCalendarDetailDate = '';
+            document.body.style.overflow = '';
+            document.getElementById('mobile-calendar-detail-modal')?.classList.add('hidden');
+        },
+        toggleMobileRecentRequestsOpen: () => {
+            app.mobileRecentRequestsOpen = !app.mobileRecentRequestsOpen;
+            app.refreshDashboard();
         },
         canUseCalendarClickRequest: () => {
             if (!app.currentUser) return false;
@@ -2414,6 +3472,44 @@
                 startMinutes: startHour * 60,
                 endMinutes: endHour * 60
             };
+        },
+        isTimeOffConflictRequest: (req) => {
+            if (!req) return false;
+            return !app.isWorkReportRequest(req) && app.isTimeOffType(req.type);
+        },
+        hasTimeRangeOverlap: (leftRange, rightRange) => {
+            if (!leftRange || !rightRange) return true;
+            return leftRange.startMinutes < rightRange.endMinutes && rightRange.startMinutes < leftRange.endMinutes;
+        },
+        findTimeOffConflictRequest: (requestUser, candidate, options = {}) => {
+            const editingId = security.cleanInlineValue(options.editingId || '');
+            const candidateType = security.normalizeType(candidate.type);
+            const candidateDate = security.normalizeDate(candidate.startDate, '');
+            const candidateRange = app.parseRequestTimeRange(candidate.timeRange);
+            if (!requestUser || !candidateDate || !app.isTimeOffType(candidateType)) return null;
+
+            const requests = Array.isArray(appData.requests) ? appData.requests : [];
+            return requests.find((req) => {
+                if (String(req.userId) !== String(requestUser.id)) return false;
+                if (['cancelled', 'rejected'].includes(security.normalizeStatus(req.status))) return false;
+                if (editingId && String(req.id) === String(editingId)) return false;
+                if (!app.isTimeOffConflictRequest(req)) return false;
+                const existingDate = security.normalizeDate(req.startDate, '');
+                if (existingDate !== candidateDate) return false;
+
+                const existingType = security.normalizeType(req.type);
+                const existingRange = app.parseRequestTimeRange(req.timeRange);
+                if (candidateType === '시간차(퇴근)' && existingType === '시간차(퇴근)') return true;
+                return app.hasTimeRangeOverlap(existingRange, candidateRange);
+            }) || null;
+        },
+        getTimeOffConflictMessage: (existingReq, candidateType) => {
+            const safeCandidateType = security.normalizeType(candidateType);
+            const existingType = security.normalizeType(existingReq && existingReq.type);
+            if (safeCandidateType === '시간차(퇴근)' && existingType === '시간차(퇴근)') {
+                return '같은 날짜에는 조퇴(시간차 퇴근)를 1건만 등록할 수 있습니다.';
+            }
+            return '같은 날짜의 시간차 요청이 기존 시간과 겹칩니다. 시간을 다시 확인해 주세요.';
         },
         getMemberAbsenceState: (member, nowMoment = moment()) => {
             if (!member) return { absent: false, label: '' };
@@ -2476,11 +3572,706 @@
             }
             app.openRequestModal(result.dateStr);
         },
-        openRequestModal: (presetDate = '') => {
+        openRequestModal: (presetDate = '', options = {}) => {
             const modal = document.getElementById('req-modal');
             if (!modal) return;
-            app.initModal(presetDate);
+            app.initModal(presetDate, options);
             modal.classList.remove('hidden');
+        },
+        openReportBoard: (category) => {
+            const safeCategory = category === 'holiday_work' ? 'holiday_work' : 'overtime';
+            app.reportBoardCategory = safeCategory;
+            app.reportBoardYear = app.viewYear;
+            app.reportBoardMonth = app.viewMonth;
+            app.reportDetailRequestId = '';
+            const modal = document.getElementById('report-board-modal');
+            if (!modal) return;
+            app.renderReportBoardModal();
+            modal.classList.remove('hidden');
+            modal.classList.add('flex');
+        },
+        closeReportBoard: () => {
+            const modal = document.getElementById('report-board-modal');
+            if (!modal) return;
+            modal.classList.add('hidden');
+            modal.classList.remove('flex');
+        },
+        openWorkReportModal: (presetType = '') => {
+            const modal = document.getElementById('work-report-modal');
+            if (!modal) return;
+            app.initWorkReportModal(presetType);
+            modal.classList.remove('hidden');
+            modal.classList.add('flex');
+        },
+        closeWorkReportModal: () => {
+            const modal = document.getElementById('work-report-modal');
+            if (!modal) return;
+            modal.classList.add('hidden');
+            modal.classList.remove('flex');
+        },
+        changeReportBoardMonth: (delta) => {
+            const next = moment({ year: app.reportBoardYear, month: app.reportBoardMonth, date: 1 }).add(Number(delta || 0), 'month');
+            app.reportBoardYear = next.year();
+            app.reportBoardMonth = next.month();
+            app.renderReportBoardModal();
+        },
+        getDefaultWorkReportType: () => {
+            const available = app.getAvailableWorkReportTypes();
+            if (available.includes('잔업')) return '잔업';
+            if (available.includes('특근')) return '특근';
+            return '잔업';
+        },
+        getWorkReportTypeOptionsHtml: (selectedValue = '') => {
+            const available = app.getAvailableWorkReportTypes();
+            const safeSelected = available.includes(selectedValue) ? selectedValue : (available[0] || '잔업');
+            return available.map((type) => `<option value="${type}" ${type === safeSelected ? 'selected' : ''}>${type}</option>`).join('');
+        },
+        updateWorkReportPreview: () => {
+            const preview = document.getElementById('work-report-preview');
+            const typeEl = document.getElementById('work-report-type');
+            const dateEl = document.getElementById('work-report-date');
+            const startEl = document.getElementById('work-report-start-time');
+            const durationEl = document.getElementById('work-report-duration');
+            if (!preview || !typeEl || !dateEl || !startEl || !durationEl) return;
+            const type = security.normalizeType(typeEl.value || app.getDefaultWorkReportType());
+            const dateStr = security.normalizeDate(dateEl.value, '');
+            let startHour = parseInt(startEl.value, 10);
+            const duration = parseInt(durationEl.value, 10);
+            if (type === '잔업') {
+                startHour = Number(app.getTimeoffEndHourForDate(app.currentUser, dateStr || moment().format('YYYY-MM-DD')));
+                if (Number.isFinite(startHour)) startEl.value = String(startHour);
+            }
+            if (!Number.isFinite(startHour) || !Number.isFinite(duration)) {
+                preview.innerText = '';
+                return;
+            }
+            const endHour = startHour + duration;
+            if (endHour > 24) {
+                preview.innerText = '* 종료 시간이 24:00을 넘지 않게 설정해주세요.';
+                preview.style.color = '#dc2626';
+                return;
+            }
+            preview.innerText = `${type} 시간: ${formatHour(startHour)} ~ ${formatHour(endHour)} (${duration}시간)`;
+            preview.style.color = type === '특근' ? '#be123c' : '#334155';
+        },
+        syncWorkReportTypeDefaults: () => {
+            const typeEl = document.getElementById('work-report-type');
+            const dateEl = document.getElementById('work-report-date');
+            const statusEl = document.getElementById('work-report-date-status');
+            const startEl = document.getElementById('work-report-start-time');
+            const deptEl = document.getElementById('work-report-dept');
+            if (!typeEl) return;
+            const type = security.normalizeType(typeEl.value || app.getDefaultWorkReportType());
+            const dateStr = security.normalizeDate(dateEl?.value, moment().format('YYYY-MM-DD'));
+            if (type === '잔업') {
+                const endHour = Number(app.getTimeoffEndHourForDate(app.currentUser, dateStr));
+                if (startEl && Number.isFinite(endHour)) {
+                    startEl.value = String(endHour);
+                    startEl.disabled = true;
+                    startEl.classList.add('bg-gray-100', 'text-gray-500');
+                }
+                if (statusEl) {
+                    if (holidayLogic.isRedDay(dateStr) || holidayLogic.isSat(dateStr)) {
+                        statusEl.innerText = '⚠️ 잔업은 평일에만 보고할 수 있습니다.';
+                        statusEl.style.color = '#ef4444';
+                    } else {
+                        statusEl.innerText = '✅ 잔업은 저장된 퇴근시간 기준으로 시작시간이 자동 적용됩니다.';
+                        statusEl.style.color = '#10b981';
+                    }
+                }
+            } else {
+                if (startEl) {
+                    startEl.disabled = false;
+                    startEl.classList.remove('bg-gray-100', 'text-gray-500');
+                    if (!startEl.value) startEl.value = '9';
+                }
+                if (statusEl) {
+                    statusEl.innerText = '✅ 특근은 주말/공휴일에도 보고할 수 있습니다.';
+                    statusEl.style.color = '#10b981';
+                }
+            }
+            if (deptEl && !deptEl.value) deptEl.value = security.cleanText((app.currentUser && app.currentUser.dept) || '');
+            app.updateWorkReportPreview();
+        },
+        initWorkReportModal: (presetType = '') => {
+            const typeEl = document.getElementById('work-report-type');
+            const dateEl = document.getElementById('work-report-date');
+            const startEl = document.getElementById('work-report-start-time');
+            const durationEl = document.getElementById('work-report-duration');
+            const reasonEl = document.getElementById('work-report-reason');
+            const detailEl = document.getElementById('work-report-work-detail');
+            const deptEl = document.getElementById('work-report-dept');
+            const noteEl = document.getElementById('work-report-note');
+            const allowPastEl = document.getElementById('work-report-allow-past');
+            const available = app.getAvailableWorkReportTypes();
+            const selected = available.includes(security.normalizeType(presetType)) ? security.normalizeType(presetType) : app.getDefaultWorkReportType();
+            if (typeEl) {
+                typeEl.innerHTML = app.getWorkReportTypeOptionsHtml(selected);
+                typeEl.value = selected;
+            }
+            const today = moment().format('YYYY-MM-DD');
+            if (allowPastEl) allowPastEl.checked = false;
+            if (dateEl) {
+                dateEl.min = today;
+                dateEl.value = today;
+            }
+            if (startEl) startEl.value = '9';
+            if (durationEl) durationEl.value = '1';
+            if (reasonEl) reasonEl.value = '';
+            if (detailEl) detailEl.value = '';
+            if (deptEl) deptEl.value = security.cleanText((app.currentUser && app.currentUser.dept) || '');
+            if (noteEl) noteEl.value = '';
+            app.syncWorkReportTypeDefaults();
+        },
+        toggleWorkReportPastDates: () => {
+            const dateEl = document.getElementById('work-report-date');
+            const allowPastEl = document.getElementById('work-report-allow-past');
+            if (!dateEl || !allowPastEl) return;
+            const today = moment().format('YYYY-MM-DD');
+            if (allowPastEl.checked) {
+                dateEl.removeAttribute('min');
+            } else {
+                dateEl.min = today;
+                if (dateEl.value && dateEl.value < today) dateEl.value = today;
+            }
+            app.syncWorkReportTypeDefaults();
+        },
+        submitWorkReport: async () => {
+            try {
+                if (!app.currentUser) return alert('세션이 만료되었습니다.');
+                const typeEl = document.getElementById('work-report-type');
+                const dateEl = document.getElementById('work-report-date');
+                const startEl = document.getElementById('work-report-start-time');
+                const durationEl = document.getElementById('work-report-duration');
+                const reasonEl = document.getElementById('work-report-reason');
+                const detailEl = document.getElementById('work-report-work-detail');
+                const deptEl = document.getElementById('work-report-dept');
+                const noteEl = document.getElementById('work-report-note');
+                if (!typeEl || !dateEl || !startEl || !durationEl || !reasonEl || !detailEl || !deptEl || !noteEl) {
+                    return alert('잔업/특근 신청창을 다시 열어주세요.');
+                }
+
+                const type = security.normalizeType(typeEl.value || app.getDefaultWorkReportType());
+                const dateStr = security.normalizeDate(dateEl.value, '');
+                const reason = security.cleanText(reasonEl.value || '');
+                const workDetail = security.cleanMultiline(detailEl.value || '');
+                const requestDept = security.cleanText(deptEl.value || '');
+                const note = security.cleanMultiline(noteEl.value || '');
+                if (!dateStr) return alert('날짜를 선택하세요.');
+                if (!reason) return alert('사유를 입력하세요.');
+                if (!workDetail) return alert('업무내용을 입력하세요.');
+                if (!requestDept) return alert('요청 부서를 입력하세요.');
+
+                const isHoliday = holidayLogic.isRedDay(dateStr) || holidayLogic.isSat(dateStr);
+                let startHour = parseInt(startEl.value, 10);
+                const duration = parseInt(durationEl.value, 10);
+                if (!Number.isFinite(duration) || duration < 1) return alert('보고 시간을 확인해주세요.');
+
+                if (type === '잔업') {
+                    startHour = Number(app.getTimeoffEndHourForDate(app.currentUser, dateStr));
+                    if (Number.isFinite(startHour)) startEl.value = String(startHour);
+                    const hasSameDayHolidayWork = (appData.requests || []).some((req) =>
+                        String(req.userId) === String(app.currentUser.id) &&
+                        security.normalizeDate(req.startDate, '') === dateStr &&
+                        app.getWorkReportCategory(req) === 'holiday_work' &&
+                        String(req.status || '') === 'reported'
+                    );
+                    if (isHoliday && !hasSameDayHolidayWork) {
+                        return alert('잔업은 평일에만 가능하며, 휴일에는 같은 날짜 특근 보고가 있는 경우에만 추가 잔업을 기록할 수 있습니다.');
+                    }
+                }
+
+                if (!Number.isFinite(startHour)) return alert('시작 시간을 확인해주세요.');
+                const endHour = startHour + duration;
+                if (endHour > 24) return alert('종료 시간이 24:00을 넘지 않게 설정해주세요.');
+
+                const reportCategory = type === '특근' ? 'holiday_work' : 'overtime';
+                const newReq = security.sanitizeRequest({
+                    id: Date.now(),
+                    userId: app.currentUser.id,
+                    userName: app.currentUser.name,
+                    dept: app.currentUser.dept,
+                    role: app.currentUser.role,
+                    type,
+                    startDate: dateStr,
+                    endDate: dateStr,
+                    hours: duration,
+                    timeRange: `${formatHour(startHour)}~${formatHour(endHour)}`,
+                    reason,
+                    detailReason: '',
+                    status: 'reported',
+                    reportCategory,
+                    workDetail,
+                    requestDept,
+                    note,
+                    requestedStartAt: formatHour(startHour),
+                    requestedEndAt: formatHour(endHour),
+                    reportedHours: duration,
+                    timestamp: new Date().toISOString()
+                });
+
+                const saved = await db.upsertReq(newReq, { keepOverlayOnSuccess: true });
+                if (!saved) return;
+                await app.logUserAction('WorkReportCreate', `${newReq.id}:${type}:${dateStr}:${app.currentUser.id}`);
+                app.closeWorkReportModal();
+                app.reportBoardYear = moment(dateStr, 'YYYY-MM-DD', true).date() >= 16
+                    ? moment(dateStr, 'YYYY-MM-DD', true).add(1, 'month').year()
+                    : moment(dateStr, 'YYYY-MM-DD', true).year();
+                app.reportBoardMonth = moment(dateStr, 'YYYY-MM-DD', true).date() >= 16
+                    ? moment(dateStr, 'YYYY-MM-DD', true).add(1, 'month').month()
+                    : moment(dateStr, 'YYYY-MM-DD', true).month();
+                app.openReportBoard(reportCategory);
+                alert('보고가 저장되었습니다.');
+                document.getElementById('loading-overlay').style.display = 'none';
+            } catch (err) {
+                console.error(err);
+                alert(`오류: ${err.message || err}`);
+                document.getElementById('loading-overlay').style.display = 'none';
+            }
+        },
+        getReportBoardRange: (year = app.reportBoardYear, month = app.reportBoardMonth) => {
+            const safeYear = Number(year);
+            const safeMonth = Number(month);
+            const end = moment({ year: safeYear, month: safeMonth, date: 15 }).startOf('day');
+            const start = end.clone().subtract(1, 'month').date(16).startOf('day');
+            return { start, end };
+        },
+        getReportBoardPeriodLabel: (year = app.reportBoardYear, month = app.reportBoardMonth) => `${year}년 ${Number(month) + 1}월 정산`,
+        getReportBoardPeriodKey: (year = app.reportBoardYear, month = app.reportBoardMonth) => `${Number(year)}-${String(Number(month) + 1).padStart(2, '0')}`,
+        getReportBoardDueDate: (year = app.reportBoardYear, month = app.reportBoardMonth) => {
+            let due = moment({ year: Number(year), month: Number(month), date: 16 }).startOf('day');
+            const dueDateStr = due.format('YYYY-MM-DD');
+            if (holidayLogic.isRedDay(dueDateStr) || holidayLogic.isSat(dueDateStr)) {
+                due = due.clone().add(1, 'week').startOf('isoWeek');
+                while (holidayLogic.isRedDay(due.format('YYYY-MM-DD')) || holidayLogic.isSat(due.format('YYYY-MM-DD'))) {
+                    due.add(1, 'day');
+                }
+            }
+            return due;
+        },
+        isReportSettlementSubmitted: (req, year = app.reportBoardYear, month = app.reportBoardMonth) => {
+            if (!req) return false;
+            return String(req.settlementPeriodKey || '') === app.getReportBoardPeriodKey(year, month) && !!String(req.settlementSubmittedAt || '').trim();
+        },
+        getIntegratedReportBoardRows: (year = app.reportBoardYear, month = app.reportBoardMonth) => {
+            const { start, end } = app.getReportBoardRange(year, month);
+            return (appData.requests || []).filter((req) => {
+                if (!app.isWorkReportRequest(req)) return false;
+                if (String(req.status || '') !== 'reported') return false;
+                const safeDate = security.normalizeDate(req.startDate, '');
+                if (!safeDate) return false;
+                const m = moment(safeDate, 'YYYY-MM-DD', true);
+                return m.isValid() && m.isSameOrAfter(start, 'day') && m.isSameOrBefore(end, 'day');
+            }).sort((a, b) => {
+                const dateDiff = String(a.startDate || '').localeCompare(String(b.startDate || ''), 'ko');
+                if (dateDiff !== 0) return dateDiff;
+                const userDiff = String(a.userName || '').localeCompare(String(b.userName || ''), 'ko');
+                if (userDiff !== 0) return userDiff;
+                return String(a.requestedStartAt || a.timeRange || '').localeCompare(String(b.requestedStartAt || b.timeRange || ''), 'ko');
+            });
+        },
+        getPersonalReportBoardRows: (year = app.reportBoardYear, month = app.reportBoardMonth) => {
+            const safeUserId = security.cleanInlineValue(app.currentUser && app.currentUser.id);
+            return app.getIntegratedReportBoardRows(year, month).filter((req) => String(req.userId) === String(safeUserId));
+        },
+        getPersonalReportSubmissionInfo: (rows, year = app.reportBoardYear, month = app.reportBoardMonth) => {
+            const safeRows = Array.isArray(rows) ? rows : [];
+            const submittedRows = safeRows.filter((req) => app.isReportSettlementSubmitted(req, year, month));
+            const unsubmittedRows = safeRows.filter((req) => !app.isReportSettlementSubmitted(req, year, month));
+            const latestSubmittedAt = submittedRows
+                .map((req) => String(req.settlementSubmittedAt || '').trim())
+                .filter(Boolean)
+                .sort()
+                .slice(-1)[0] || '';
+            return {
+                totalCount: safeRows.length,
+                submittedCount: submittedRows.length,
+                unsubmittedCount: unsubmittedRows.length,
+                latestSubmittedAt,
+                isFullySubmitted: safeRows.length > 0 && unsubmittedRows.length === 0,
+                rowsToSubmit: unsubmittedRows.length ? unsubmittedRows : safeRows
+            };
+        },
+        getIntegratedReportBoardTotals: (rows) => {
+            const safeRows = Array.isArray(rows) ? rows : [];
+            let overtimeHours = 0;
+            const holidayWorkKeys = new Set();
+            safeRows.forEach((req) => {
+                const category = app.getWorkReportCategory(req);
+                const hours = Number(req.reportedHours || req.hours || 0);
+                if (category === 'overtime') {
+                    overtimeHours += Number.isFinite(hours) ? hours : 0;
+                    return;
+                }
+                if (category === 'holiday_work') {
+                    const safeUserId = security.cleanInlineValue(req.userId || req.userName || '');
+                    const safeDate = security.normalizeDate(req.startDate, '');
+                    if (safeDate) holidayWorkKeys.add(`${safeUserId}:${safeDate}`);
+                }
+            });
+            const overtimeText = Number.isInteger(overtimeHours)
+                ? String(overtimeHours)
+                : String(overtimeHours.toFixed(2).replace(/\.?0+$/, ''));
+            return {
+                overtimeHours,
+                overtimeText,
+                holidayWorkDays: holidayWorkKeys.size
+            };
+        },
+        getAdminReportBoardSummaryRows: (rows) => {
+            const byUser = new Map();
+            (Array.isArray(rows) ? rows : []).forEach((req) => {
+                const safeUserId = security.cleanInlineValue(req.userId || '');
+                if (!safeUserId) return;
+                if (!byUser.has(safeUserId)) {
+                    byUser.set(safeUserId, {
+                        userId: safeUserId,
+                        userName: security.cleanText(req.userName || '-'),
+                        dept: security.cleanText(req.dept || ''),
+                        overtimeHours: 0,
+                        holidayWorkDays: new Set(),
+                        totalCount: 0,
+                        submittedCount: 0,
+                        latestSubmittedAt: ''
+                    });
+                }
+                const item = byUser.get(safeUserId);
+                item.totalCount += 1;
+                const category = app.getWorkReportCategory(req);
+                const hours = Number(req.reportedHours || req.hours || 0);
+                if (category === 'overtime') {
+                    item.overtimeHours += Number.isFinite(hours) ? hours : 0;
+                } else if (category === 'holiday_work') {
+                    const safeDate = security.normalizeDate(req.startDate, '');
+                    if (safeDate) item.holidayWorkDays.add(safeDate);
+                }
+                if (app.isReportSettlementSubmitted(req, app.reportBoardYear, app.reportBoardMonth)) {
+                    item.submittedCount += 1;
+                    const submittedAt = String(req.settlementSubmittedAt || '').trim();
+                    if (submittedAt && (!item.latestSubmittedAt || submittedAt > item.latestSubmittedAt)) item.latestSubmittedAt = submittedAt;
+                }
+            });
+            return [...byUser.values()].map((item) => {
+                const overtimeText = Number.isInteger(item.overtimeHours)
+                    ? String(item.overtimeHours)
+                    : String(item.overtimeHours.toFixed(2).replace(/\.?0+$/, ''));
+                return {
+                    ...item,
+                    overtimeText,
+                    holidayWorkDayCount: item.holidayWorkDays.size,
+                    submissionText: item.totalCount > 0 && item.submittedCount === item.totalCount ? '제출 완료' : '미제출'
+                };
+            }).sort((a, b) => {
+                const overtimeDiff = Number(b.overtimeHours || 0) - Number(a.overtimeHours || 0);
+                if (overtimeDiff !== 0) return overtimeDiff;
+                const holidayDiff = Number(b.holidayWorkDayCount || 0) - Number(a.holidayWorkDayCount || 0);
+                if (holidayDiff !== 0) return holidayDiff;
+                return String(a.userName || '').localeCompare(String(b.userName || ''), 'ko');
+            });
+        },
+        getReportBoardRowsForUser: (userId, year = app.reportBoardYear, month = app.reportBoardMonth) => {
+            const safeUserId = security.cleanInlineValue(userId);
+            return app.getIntegratedReportBoardRows(year, month).filter((req) => String(req.userId) === String(safeUserId));
+        },
+        buildWorkReportSettlementMailDraft: (rows, year = app.reportBoardYear, month = app.reportBoardMonth, requester = app.currentUser) => {
+            const safeRows = Array.isArray(rows) ? rows : [];
+            const totals = app.getIntegratedReportBoardTotals(safeRows);
+            const periodLabel = app.getReportBoardPeriodLabel(year, month);
+            const { start, end } = app.getReportBoardRange(year, month);
+            const safeRequester = requester || {};
+            const recipients = app.getMailRecipientsForRequester(safeRequester);
+            const rankSuffix = security.cleanText(safeRequester.rank || '');
+            const subject = `[잔업/특근 보고] ${security.cleanText(safeRequester.name || '-')} / ${periodLabel}`;
+            const lines = [
+                `안녕하세요! ${security.cleanText(safeRequester.name || '-')}${rankSuffix ? ` ${rankSuffix}` : ''}입니다.`,
+                '',
+                '다음과 같이 잔업/특근 근무 보고 드립니다.',
+                '',
+                `정산기간: ${start.format('YYYY-MM-DD')} ~ ${end.format('YYYY-MM-DD')}`,
+                '',
+                '잔업일자 | 작업시작~완료 | 작업시간 | 잔업/특근 | 업무내용 | 요청 부서 | 비고',
+                '--------------------------------------------------------------------------------'
+            ];
+            safeRows.forEach((req) => {
+                lines.push([
+                    security.normalizeDate(req.startDate, '-'),
+                    security.cleanText(req.timeRange || '-'),
+                    `${Number(req.reportedHours || req.hours || 0)}h`,
+                    app.getRequestDisplayType(req),
+                    security.cleanMultiline(req.workDetail || req.reason || '-').replace(/\n+/g, ' / '),
+                    security.cleanText(req.requestDept || '-'),
+                    security.cleanMultiline(req.note || '-').replace(/\n+/g, ' / ')
+                ].join(' | '));
+            });
+            lines.push('--------------------------------------------------------------------------------');
+            lines.push(`합계 | - | ${totals.overtimeText}h | 특근 ${totals.holidayWorkDays}일 | - | - | -`);
+            lines.push('');
+            lines.push('감사합니다.');
+            lines.push('좋은 하루 보내세요.');
+            return {
+                recipients,
+                subject,
+                body: lines.join('\n')
+            };
+        },
+        openWorkReportSettlementDraftModal: () => {
+            const rows = app.getPersonalReportBoardRows(app.reportBoardYear, app.reportBoardMonth);
+            if (!rows.length) return alert('정산 메일 초안을 만들 보고 내역이 없습니다.');
+            const draft = app.buildWorkReportSettlementMailDraft(rows, app.reportBoardYear, app.reportBoardMonth, app.currentUser);
+            const modal = document.getElementById('report-settlement-mail-modal');
+            const subjectEl = document.getElementById('report-settlement-mail-subject');
+            const toEl = document.getElementById('report-settlement-mail-to');
+            const ccEl = document.getElementById('report-settlement-mail-cc');
+            const bodyEl = document.getElementById('report-settlement-mail-body');
+            if (!modal || !subjectEl || !toEl || !ccEl || !bodyEl) return;
+            subjectEl.value = draft.subject;
+            toEl.value = draft.recipients.to || '';
+            ccEl.value = draft.recipients.cc || '';
+            bodyEl.value = draft.body;
+            modal.classList.remove('hidden');
+            modal.classList.add('flex');
+        },
+        closeWorkReportSettlementDraftModal: () => {
+            const modal = document.getElementById('report-settlement-mail-modal');
+            if (!modal) return;
+            modal.classList.add('hidden');
+            modal.classList.remove('flex');
+        },
+        copyWorkReportSettlementDraft: async () => {
+            const subjectEl = document.getElementById('report-settlement-mail-subject');
+            const bodyEl = document.getElementById('report-settlement-mail-body');
+            if (!subjectEl || !bodyEl) return;
+            await navigator.clipboard.writeText(`제목: ${subjectEl.value}\n\n${bodyEl.value}`);
+            alert('정산 메일 초안을 복사했습니다.');
+        },
+        openWorkReportSettlementMailApp: () => {
+            const subjectEl = document.getElementById('report-settlement-mail-subject');
+            const toEl = document.getElementById('report-settlement-mail-to');
+            const ccEl = document.getElementById('report-settlement-mail-cc');
+            const bodyEl = document.getElementById('report-settlement-mail-body');
+            if (!subjectEl || !toEl || !ccEl || !bodyEl) return;
+            openOutlookDraft(toEl.value, subjectEl.value, bodyEl.value, ccEl.value);
+        },
+        submitCurrentWorkReportSettlement: async () => {
+            const rows = app.getPersonalReportBoardRows(app.reportBoardYear, app.reportBoardMonth);
+            const info = app.getPersonalReportSubmissionInfo(rows, app.reportBoardYear, app.reportBoardMonth);
+            const targetRows = info.rowsToSubmit;
+            if (!targetRows.length) return alert('제출 처리할 잔업/특근 기록이 없습니다.');
+            if (!confirm(`${app.getReportBoardPeriodLabel(app.reportBoardYear, app.reportBoardMonth)} 정산 제출 완료로 표시할까요?`)) return;
+            try {
+                document.getElementById('loading-text').innerText = '정산 제출 처리 중...';
+                document.getElementById('loading-overlay').style.display = 'flex';
+                const result = await db.submitWorkReportSettlement(app.reportBoardYear, app.reportBoardMonth, targetRows.map((req) => req.id));
+                const submittedAt = String(result.submittedAt || '');
+                const periodKey = String(result.periodKey || '');
+                const requestIdSet = new Set((result.requestIds || []).map((id) => String(id)));
+                appData.requests = appData.requests.map((req) => {
+                    if (!requestIdSet.has(String(req.id))) return req;
+                    return security.sanitizeRequest({
+                        ...req,
+                        settlementPeriodKey: periodKey,
+                        settlementSubmittedAt: submittedAt,
+                        settlementSubmittedBy: app.currentUser && app.currentUser.id,
+                        settlementSubmittedByName: app.currentUser && app.currentUser.name
+                    });
+                });
+                appData.meta.requestDataVersion += 1;
+                app.renderReportBoardModal();
+                alert('정산 제출 완료로 표시했습니다.');
+            } catch (err) {
+                alert(`오류: ${err.message || err}`);
+            } finally {
+                document.getElementById('loading-overlay').style.display = 'none';
+            }
+        },
+        renderReportBoardModal: () => {
+            const body = document.getElementById('report-board-body');
+            if (!body) return;
+            const isAdminView = app.canViewAdminWorkReportBoard();
+            const rows = isAdminView
+                ? app.getIntegratedReportBoardRows(app.reportBoardYear, app.reportBoardMonth)
+                : app.getPersonalReportBoardRows(app.reportBoardYear, app.reportBoardMonth);
+            const periodLabel = app.getReportBoardPeriodLabel(app.reportBoardYear, app.reportBoardMonth);
+            const { start, end } = app.getReportBoardRange(app.reportBoardYear, app.reportBoardMonth);
+            const dueDate = app.getReportBoardDueDate(app.reportBoardYear, app.reportBoardMonth);
+            const totals = app.getIntegratedReportBoardTotals(rows);
+            const summaryRows = isAdminView ? app.getAdminReportBoardSummaryRows(rows) : [];
+            const personalSubmissionInfo = !isAdminView ? app.getPersonalReportSubmissionInfo(rows, app.reportBoardYear, app.reportBoardMonth) : null;
+            body.innerHTML = `
+                <div class="flex flex-col gap-4">
+                    <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+                        <div>
+                            <div class="text-lg font-bold text-gray-900">${periodLabel} 잔업/특근 현황</div>
+                            <p class="text-sm text-gray-500">집계 기준: ${start.format('YYYY-MM-DD')} ~ ${end.format('YYYY-MM-DD')}</p>
+                            <p class="text-xs text-gray-400 mt-1">${isAdminView ? '관리자용 집계표' : '내 기록만 표시됩니다.'}</p>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <button type="button" onclick="app.changeReportBoardMonth(-1)" class="px-3 py-2 rounded-lg border border-gray-200 text-sm font-bold text-gray-600 hover:bg-gray-50">이전달</button>
+                            <button type="button" onclick="app.changeReportBoardMonth(1)" class="px-3 py-2 rounded-lg border border-gray-200 text-sm font-bold text-gray-600 hover:bg-gray-50">다음달</button>
+                            ${isAdminView ? '' : `<button type="button" onclick="app.openWorkReportSettlementDraftModal()" class="px-4 py-2 rounded-lg border border-indigo-200 text-indigo-700 text-sm font-bold bg-indigo-50 hover:bg-indigo-100">메일 초안</button>`}
+                            ${isAdminView ? '' : `<button type="button" onclick="app.submitCurrentWorkReportSettlement()" class="px-4 py-2 rounded-lg border border-emerald-200 text-emerald-700 text-sm font-bold bg-emerald-50 hover:bg-emerald-100">제출 완료</button>`}
+                            <button type="button" onclick="app.closeReportBoard(); app.openWorkReportModal();" class="px-4 py-2 rounded-lg bg-slate-700 text-white text-sm font-bold">보고 추가</button>
+                        </div>
+                    </div>
+                    ${isAdminView ? '' : `
+                    <div class="rounded-xl border ${personalSubmissionInfo.isFullySubmitted ? 'border-emerald-200 bg-emerald-50' : 'border-amber-200 bg-amber-50'} px-4 py-3">
+                        <div class="text-sm font-bold ${personalSubmissionInfo.isFullySubmitted ? 'text-emerald-700' : 'text-amber-700'}">
+                            ${personalSubmissionInfo.isFullySubmitted
+                                ? `정산 제출 완료${personalSubmissionInfo.latestSubmittedAt ? ` · ${personalSubmissionInfo.latestSubmittedAt}` : ''}`
+                                : `미제출 ${personalSubmissionInfo.unsubmittedCount}건 · 제출 예정일 ${dueDate.format('YYYY-MM-DD')}`}
+                        </div>
+                        <div class="mt-1 text-xs ${personalSubmissionInfo.isFullySubmitted ? 'text-emerald-600' : 'text-amber-600'}">
+                            메일 초안을 확인한 뒤 제출 완료로 표시하세요.
+                        </div>
+                    </div>`}
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div class="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
+                            <div class="text-xs font-bold text-slate-500">${isAdminView ? '총 잔업시간' : '내 총 잔업시간'}</div>
+                            <div class="mt-1 text-2xl font-extrabold text-slate-800">${totals.overtimeText}h</div>
+                        </div>
+                        <div class="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3">
+                            <div class="text-xs font-bold text-rose-500">${isAdminView ? '총 특근일수' : '내 총 특근일수'}</div>
+                            <div class="mt-1 text-2xl font-extrabold text-rose-700">${totals.holidayWorkDays}일</div>
+                        </div>
+                    </div>
+                    <div class="overflow-auto rounded-xl border border-gray-200">
+                        <table class="w-full min-w-[1100px] text-sm">
+                            <thead class="bg-gray-50 text-gray-600">
+                                ${isAdminView
+                                    ? `<tr>
+                                            <th class="px-3 py-3 text-left font-bold">직원명</th>
+                                            <th class="px-3 py-3 text-left font-bold">총 잔업시간</th>
+                                            <th class="px-3 py-3 text-left font-bold">총 특근일수</th>
+                                            <th class="px-3 py-3 text-left font-bold">제출 상태</th>
+                                            <th class="px-3 py-3 text-center font-bold">상세</th>
+                                        </tr>`
+                                    : `<tr>
+                                            <th class="px-3 py-3 text-left font-bold">일자</th>
+                                            <th class="px-3 py-3 text-left font-bold">시간</th>
+                                            <th class="px-3 py-3 text-left font-bold">구분</th>
+                                            <th class="px-3 py-3 text-left font-bold">사유</th>
+                                            <th class="px-3 py-3 text-center font-bold">상세</th>
+                                        </tr>`}
+                            </thead>
+                            <tbody class="bg-white">
+                                ${isAdminView
+                                    ? (summaryRows.length ? summaryRows.map((item) => `
+                                        <tr class="border-t hover:bg-gray-50">
+                                            <td class="px-3 py-3 font-semibold text-gray-800">${security.cleanText(item.userName || '-')}</td>
+                                            <td class="px-3 py-3 text-gray-700">${item.overtimeText}h</td>
+                                            <td class="px-3 py-3 text-gray-700">${Number(item.holidayWorkDayCount || 0)}일</td>
+                                            <td class="px-3 py-3 text-gray-700"><span class="inline-flex px-2 py-0.5 rounded-full text-xs font-bold ${item.submissionText === '제출 완료' ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}">${item.submissionText}</span>${item.latestSubmittedAt ? `<div class="mt-1 text-[11px] text-gray-400">${item.latestSubmittedAt}</div>` : ''}</td>
+                                            <td class="px-3 py-3 text-center"><button type="button" onclick="app.openReportUserDetail('${security.cleanInlineValue(item.userId)}')" class="text-indigo-600 text-xs font-bold underline">보기</button></td>
+                                        </tr>
+                                    `).join('') : `<tr><td colspan="5" class="px-4 py-10 text-center text-gray-400">${periodLabel} 보고 내역이 없습니다.</td></tr>`)
+                                    : (rows.length ? rows.map((req) => `
+                                        <tr class="border-t hover:bg-gray-50">
+                                            <td class="px-3 py-3 text-gray-600">${security.normalizeDate(req.startDate, '-')}</td>
+                                            <td class="px-3 py-3 text-gray-600">${security.cleanText(req.timeRange || '-')} <span class="text-xs text-gray-400">(${Number(req.reportedHours || req.hours || 0)}h)</span></td>
+                                            <td class="px-3 py-3"><span class="inline-flex px-2 py-0.5 rounded-full text-xs font-bold ${app.getWorkReportCategory(req) === 'holiday_work' ? 'bg-rose-50 text-rose-700' : 'bg-slate-100 text-slate-700'}">${app.getRequestDisplayType(req)}</span></td>
+                                            <td class="px-3 py-3 text-gray-700">${security.cleanText(req.reason || '-')}</td>
+                                            <td class="px-3 py-3 text-center"><button type="button" onclick="app.openReportDetail('${security.cleanInlineValue(req.id)}')" class="text-indigo-600 text-xs font-bold underline">보기</button></td>
+                                        </tr>
+                                    `).join('') : `<tr><td colspan="5" class="px-4 py-10 text-center text-gray-400">${periodLabel} 보고 내역이 없습니다.</td></tr>`)}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>`;
+        },
+        openReportUserDetail: (userId) => {
+            const safeUserId = security.cleanInlineValue(userId);
+            const rows = app.getReportBoardRowsForUser(safeUserId, app.reportBoardYear, app.reportBoardMonth);
+            if (!rows.length) return;
+            const totals = app.getIntegratedReportBoardTotals(rows);
+            const { start, end } = app.getReportBoardRange(app.reportBoardYear, app.reportBoardMonth);
+            const body = document.getElementById('report-detail-body');
+            const modal = document.getElementById('report-detail-modal');
+            if (!body || !modal) return;
+            const userName = security.cleanText(rows[0].userName || '-');
+            app.reportDetailUserId = safeUserId;
+            app.reportDetailRequestId = '';
+            body.innerHTML = `
+                <div class="space-y-4">
+                    <div class="rounded-xl border border-gray-200 bg-gray-50 px-4 py-3">
+                        <div class="text-sm font-bold text-gray-800">${userName} · ${app.getReportBoardPeriodLabel(app.reportBoardYear, app.reportBoardMonth)} 상세</div>
+                        <div class="mt-1 text-xs text-gray-500">집계 기준: ${start.format('YYYY-MM-DD')} ~ ${end.format('YYYY-MM-DD')}</div>
+                        <div class="mt-2 text-xs ${rows.every((req) => app.isReportSettlementSubmitted(req, app.reportBoardYear, app.reportBoardMonth)) ? 'text-emerald-600' : 'text-amber-600'}">
+                            ${rows.every((req) => app.isReportSettlementSubmitted(req, app.reportBoardYear, app.reportBoardMonth))
+                                ? `제출 완료${rows.map((req) => req.settlementSubmittedAt).filter(Boolean).sort().slice(-1)[0] ? ` · ${rows.map((req) => req.settlementSubmittedAt).filter(Boolean).sort().slice(-1)[0]}` : ''}`
+                                : '미제출'}
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div class="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
+                            <div class="text-xs font-bold text-slate-500">총 잔업시간</div>
+                            <div class="mt-1 text-2xl font-extrabold text-slate-800">${totals.overtimeText}h</div>
+                        </div>
+                        <div class="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3">
+                            <div class="text-xs font-bold text-rose-500">총 특근일수</div>
+                            <div class="mt-1 text-2xl font-extrabold text-rose-700">${totals.holidayWorkDays}일</div>
+                        </div>
+                    </div>
+                    <div class="overflow-auto rounded-xl border border-gray-200">
+                        <table class="w-full min-w-[760px] text-sm">
+                            <thead class="bg-gray-50 text-gray-600">
+                                <tr>
+                                    <th class="px-3 py-3 text-left font-bold">일자</th>
+                                    <th class="px-3 py-3 text-left font-bold">시간</th>
+                                    <th class="px-3 py-3 text-left font-bold">구분</th>
+                                    <th class="px-3 py-3 text-left font-bold">사유</th>
+                                    <th class="px-3 py-3 text-left font-bold">요청 부서</th>
+                                    <th class="px-3 py-3 text-left font-bold">비고</th>
+                                </tr>
+                            </thead>
+                            <tbody class="bg-white">
+                                ${rows.map((req) => `
+                                    <tr class="border-t hover:bg-gray-50">
+                                        <td class="px-3 py-3 text-gray-600">${security.normalizeDate(req.startDate, '-')}</td>
+                                        <td class="px-3 py-3 text-gray-600">${security.cleanText(req.timeRange || '-')} <span class="text-xs text-gray-400">(${Number(req.reportedHours || req.hours || 0)}h)</span></td>
+                                        <td class="px-3 py-3"><span class="inline-flex px-2 py-0.5 rounded-full text-xs font-bold ${app.getWorkReportCategory(req) === 'holiday_work' ? 'bg-rose-50 text-rose-700' : 'bg-slate-100 text-slate-700'}">${app.getRequestDisplayType(req)}</span></td>
+                                        <td class="px-3 py-3 text-gray-700">${security.cleanText(req.reason || '-')}</td>
+                                        <td class="px-3 py-3 text-gray-600">${security.cleanText(req.requestDept || '-')}</td>
+                                        <td class="px-3 py-3 text-gray-600 whitespace-pre-line break-all">${security.cleanMultiline(req.note || '-')}</td>
+                                    </tr>
+                                `).join('')}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>`;
+            modal.classList.remove('hidden');
+            modal.classList.add('flex');
+        },
+        openReportDetail: (requestId) => {
+            const safeId = security.cleanInlineValue(requestId);
+            const req = (appData.requests || []).find((item) => String(item.id) === String(safeId));
+            if (!req) return;
+            app.reportDetailRequestId = safeId;
+            app.reportDetailUserId = '';
+            const body = document.getElementById('report-detail-body');
+            if (!body) return;
+            body.innerHTML = `
+                <div class="space-y-4 text-sm">
+                    <div class="grid grid-cols-[120px_1fr] gap-3"><div class="text-gray-500">직원명</div><div class="font-semibold text-gray-800">${security.cleanText(req.userName || '-')}</div></div>
+                    <div class="grid grid-cols-[120px_1fr] gap-3"><div class="text-gray-500">구분</div><div class="font-semibold text-gray-800">${app.getRequestDisplayType(req)}</div></div>
+                    <div class="grid grid-cols-[120px_1fr] gap-3"><div class="text-gray-500">일자</div><div class="font-semibold text-gray-800">${security.normalizeDate(req.startDate, '-')}</div></div>
+                    <div class="grid grid-cols-[120px_1fr] gap-3"><div class="text-gray-500">작업 시간</div><div class="font-semibold text-gray-800">${security.cleanText(req.timeRange || '-')} (${Number(req.reportedHours || req.hours || 0)}h)</div></div>
+                    <div class="grid grid-cols-[120px_1fr] gap-3"><div class="text-gray-500">사유</div><div class="font-semibold text-gray-800">${security.cleanText(req.reason || '-')}</div></div>
+                    <div class="grid grid-cols-[120px_1fr] gap-3"><div class="text-gray-500">업무내용</div><div class="font-semibold text-gray-800 whitespace-pre-line">${security.cleanMultiline(req.workDetail || req.detailReason || '-')}</div></div>
+                    <div class="grid grid-cols-[120px_1fr] gap-3"><div class="text-gray-500">요청 부서</div><div class="font-semibold text-gray-800">${security.cleanText(req.requestDept || '-')}</div></div>
+                    <div class="grid grid-cols-[120px_1fr] gap-3"><div class="text-gray-500">비고</div><div class="font-semibold text-gray-800 whitespace-pre-line">${security.cleanMultiline(req.note || '-')}</div></div>
+                </div>`;
+            const modal = document.getElementById('report-detail-modal');
+            if (!modal) return;
+            modal.classList.remove('hidden');
+            modal.classList.add('flex');
+        },
+        closeReportDetail: () => {
+            const modal = document.getElementById('report-detail-modal');
+            if (!modal) return;
+            modal.classList.add('hidden');
+            modal.classList.remove('flex');
+            app.reportDetailRequestId = '';
+            app.reportDetailUserId = '';
         },
         updateRejectReasonCounter: () => {
             const input = document.getElementById('reject-reason-input');
@@ -2489,21 +4280,39 @@
             if (input.value.length > 120) input.value = input.value.slice(0, 120);
             counter.innerText = `${input.value.length} / 120`;
         },
-        promptRejectReason: (req) => new Promise((resolve) => {
+        openReasonModal: (options = {}) => new Promise((resolve) => {
             const modal = document.getElementById('reject-reason-modal');
             const input = document.getElementById('reject-reason-input');
+            const title = document.getElementById('reject-reason-title');
             const subtitle = document.getElementById('reject-reason-subtitle');
+            const confirmBtn = document.getElementById('reject-reason-confirm-btn');
+            const defaultConfig = {
+                title: '반려 사유 입력',
+                subtitle: '반려 사유를 입력해 주세요.',
+                placeholder: '예: 인력 공백으로 인해 해당 기간 사용이 어렵습니다.',
+                confirmLabel: '반려',
+                emptyMessage: '반려 사유를 입력해 주세요.',
+                initialValue: ''
+            };
+            const config = {
+                ...defaultConfig,
+                ...options
+            };
             if (!modal || !input || !subtitle) {
-                const fallback = prompt('반려 사유를 입력해 주세요. (최대 120자)', '');
+                const fallback = prompt(`${config.emptyMessage} (최대 120자)`, config.initialValue || '');
                 const safeFallback = security.cleanText(fallback || '').slice(0, 120);
                 resolve(safeFallback || null);
                 return;
             }
 
+            app.reasonModalConfig = config;
             app.rejectReasonResolve = resolve;
-            app.rejectReasonTargetId = security.cleanInlineValue(req && req.id);
-            input.value = security.cleanText((req && req.rejectReason) || '').slice(0, 120);
-            subtitle.innerText = `${security.cleanText((req && req.userName) || '신청자')}님의 ${app.formatRequestPeriodText(req)} 신청을 반려합니다.`;
+            app.rejectReasonTargetId = security.cleanInlineValue(config.targetId || '');
+            if (title) title.innerText = config.title;
+            subtitle.innerText = config.subtitle;
+            if (confirmBtn) confirmBtn.innerText = config.confirmLabel;
+            input.placeholder = config.placeholder;
+            input.value = security.cleanText(config.initialValue || '').slice(0, 120);
             app.updateRejectReasonCounter();
             modal.classList.remove('hidden');
             modal.classList.add('flex');
@@ -2512,16 +4321,85 @@
                 input.setSelectionRange(input.value.length, input.value.length);
             }, 0);
         }),
+        promptRejectReason: (req) => app.openReasonModal({
+            targetId: req && req.id,
+            title: '반려 사유 입력',
+            subtitle: `${security.cleanText((req && req.userName) || '신청자')}님의 ${app.formatRequestPeriodText(req)} 신청을 반려합니다.`,
+            placeholder: '예: 인력 공백으로 인해 해당 기간 사용이 어렵습니다.',
+            confirmLabel: '반려',
+            emptyMessage: '반려 사유를 입력해 주세요.',
+            initialValue: (req && req.rejectReason) || ''
+        }),
+        promptRetroDetailReason: (context = {}) => {
+            const userName = security.cleanText(context.userName || '신청자');
+            const displayType = security.cleanText(context.displayType || '연차');
+            const periodText = security.cleanText(context.periodText || '');
+            const kindLabel = security.cleanText(context.kindLabel || '지난 신청');
+            const targetText = periodText ? `${periodText} ${displayType}` : displayType;
+            return app.openReasonModal({
+                targetId: context.targetId || '',
+                title: '상세사유 입력',
+                subtitle: `${userName}님의 ${targetText} 신청은 ${kindLabel}에 해당합니다. 상세사유를 입력해 주세요.`,
+                placeholder: '예: 누락된 신청을 뒤늦게 보완 등록합니다.',
+                confirmLabel: '확인',
+                emptyMessage: '상세사유를 입력해 주세요.',
+                initialValue: context.initialValue || ''
+            });
+        },
+        buildRetroactiveRequestContext: (requestUser, requestData) => {
+            const safeDate = security.normalizeDate(requestData && requestData.startDate);
+            if (!safeDate) return { required: false, isPastDate: false, isPastTime: false, kindLabel: '' };
+            const today = moment().startOf('day');
+            const targetDay = moment(safeDate, 'YYYY-MM-DD');
+            const isPastDate = targetDay.isBefore(today, 'day');
+            let isPastTime = false;
+
+            if (!isPastDate && targetDay.isSame(today, 'day')) {
+                if (requestData.type === '시간차(퇴근)') {
+                    const endHour = Number(app.getTimeoffEndHourForDate(requestUser, safeDate));
+                    const startHour = Number(timeLogic.calcStart(Number(requestData.hours || 0), endHour));
+                    if (Number.isFinite(startHour)) {
+                        const startMoment = moment(`${safeDate} ${String(startHour).padStart(2, '0')}:00`, 'YYYY-MM-DD HH:mm');
+                        isPastTime = moment().isSameOrAfter(startMoment);
+                    }
+                } else if (requestData.type === '시간차(외출)') {
+                    const rangeText = security.cleanText(requestData.timeRange || '');
+                    const startText = rangeText.split('~')[0] || '';
+                    const startHour = parseInt(startText, 10);
+                    if (Number.isFinite(startHour)) {
+                        const startMoment = moment(`${safeDate} ${String(startHour).padStart(2, '0')}:00`, 'YYYY-MM-DD HH:mm');
+                        isPastTime = moment().isSameOrAfter(startMoment);
+                    }
+                }
+            }
+
+            return {
+                required: isPastDate || isPastTime,
+                isPastDate,
+                isPastTime,
+                kindLabel: isPastDate && isPastTime
+                    ? '지난 날짜 및 지난 시간'
+                    : (isPastDate ? '지난 날짜' : (isPastTime ? '지난 시간' : ''))
+            };
+        },
         closeRejectReasonModal: (result = null) => {
             const modal = document.getElementById('reject-reason-modal');
             const input = document.getElementById('reject-reason-input');
+            const title = document.getElementById('reject-reason-title');
+            const subtitle = document.getElementById('reject-reason-subtitle');
+            const confirmBtn = document.getElementById('reject-reason-confirm-btn');
             if (modal) {
                 modal.classList.add('hidden');
                 modal.classList.remove('flex');
             }
             if (input) input.value = '';
+            if (title) title.innerText = '반려 사유 입력';
+            if (subtitle) subtitle.innerText = '반려 사유를 입력해 주세요.';
+            if (confirmBtn) confirmBtn.innerText = '반려';
+            if (input) input.placeholder = '예: 인력 공백으로 인해 해당 기간 사용이 어렵습니다.';
             app.updateRejectReasonCounter();
             app.rejectReasonTargetId = '';
+            app.reasonModalConfig = null;
             const resolver = app.rejectReasonResolve;
             app.rejectReasonResolve = null;
             if (typeof resolver === 'function') resolver(result);
@@ -2530,7 +4408,7 @@
             const input = document.getElementById('reject-reason-input');
             const reason = security.cleanText((input && input.value) || '').slice(0, 120);
             if (!reason) {
-                alert('반려 사유를 입력해 주세요.');
+                alert((app.reasonModalConfig && app.reasonModalConfig.emptyMessage) || '반려 사유를 입력해 주세요.');
                 return;
             }
             app.closeRejectReasonModal(reason);
@@ -2578,7 +4456,7 @@
                 const rejectReason = security.cleanText(e.rejectReason || '');
                 let detail = '';
                 if (security.normalizeType(e.type) === '시간차(퇴근)' || security.normalizeType(e.type) === '시간차(외출)') detail = ` <span class="text-xs text-gray-500">(${e.timeRange} / ${e.hours}h)</span>`;
-                html += `<div class="mb-2 last:mb-0"><div class="flex items-center flex-wrap gap-1"><span class="font-bold text-gray-800">${e.userName}</span><span class="text-xs px-1.5 py-0.5 rounded bg-gray-100 text-gray-600 border border-gray-200">${displayType}</span>${detail}</div>${e.reason ? `<div class="text-xs text-gray-500 mt-0.5 pl-2">- ${e.reason}</div>` : ''}${e.status === 'rejected' && rejectReason ? `<div class="text-xs text-red-600 mt-0.5 pl-2">- 반려 사유: ${rejectReason}</div>` : ''}</div>`;
+                html += `<div class="mb-2 last:mb-0"><div class="flex items-center flex-wrap gap-1"><span class="font-bold text-gray-800">${e.userName}</span><span class="text-xs px-1.5 py-0.5 rounded bg-gray-100 text-gray-600 border border-gray-200">${displayType}</span>${detail}</div>${e.reason ? `<div class="text-xs text-gray-500 mt-0.5 pl-2">- ${e.reason}</div>` : ''}${e.detailReason ? `<div class="text-xs text-amber-600 mt-0.5 pl-2">- 상세사유: ${security.cleanText(e.detailReason)}</div>` : ''}${e.status === 'rejected' && rejectReason ? `<div class="text-xs text-red-600 mt-0.5 pl-2">- 반려 사유: ${rejectReason}</div>` : ''}</div>`;
             });
             tooltip.innerHTML = html; tooltip.style.display = 'block'; app.moveTooltip(event);
         },
@@ -2762,30 +4640,43 @@
         submitRequest: async () => {
             try {
                 if (!app.currentUser) { alert("세션이 만료되었습니다."); return; }
+                const requestUser = app.getRequestModalTargetUser();
+                const isAdminProxy = app.isAdminProxyRequestMode();
+                if (!requestUser) return alert('대상 직원을 선택해주세요.');
                 const selection = app.getCurrentRequestSelection();
                 const type = selection.baseType;
+                const isReportRequest = ['잔업', '특근'].includes(type);
                 const rawStartDate = document.getElementById('req-start-date').value;
                 if(!rawStartDate) return alert('날짜를 선택하세요');
                 const sDate = security.normalizeDate(rawStartDate);
                 const isMultiDay = document.getElementById('is-multi-day').checked;
                 let eDate = isMultiDay ? security.normalizeDate(document.getElementById('req-end-date').value, sDate) : sDate;
-                const reason = security.cleanText(document.getElementById('req-reason').value);
+                const reason = isReportRequest
+                    ? security.cleanText(document.getElementById('req-report-reason')?.value || '')
+                    : security.cleanText(document.getElementById('req-reason').value);
+                const workDetail = security.cleanMultiline(document.getElementById('req-report-work-detail')?.value || '');
+                const requestDept = security.cleanText(document.getElementById('req-report-dept')?.value || '');
+                const note = security.cleanMultiline(document.getElementById('req-report-note')?.value || '');
                 
                 if(!sDate) return alert('날짜 형식이 올바르지 않습니다.');
-                if(!reason) return alert('사유를 선택하세요');
+                if(!reason) return alert(isReportRequest ? '사유를 입력하세요.' : '사유를 선택하세요');
+                if (isReportRequest && !workDetail) return alert('업무내용을 입력하세요.');
+                if (isReportRequest && !requestDept) return alert('요청 부서를 입력하세요.');
                 
                 const isSpecialDayOnly = selection.isSpecial && selection.requestMode === 'day_only';
                 const allowHolidayRequest = !!selection.allowHolidayRequest;
                 if (!isSpecialDayOnly && !allowHolidayRequest && (holidayLogic.isRedDay(sDate) || holidayLogic.isSat(sDate))) {
-                    return alert("휴일/주말에는 신청할 수 없습니다.");
+                    if (!isReportRequest || type === '잔업') return alert("휴일/주말에는 신청할 수 없습니다.");
                 }
 
                 const currentStart = moment(sDate);
                 const currentEnd = moment(eDate);
                 const duplicate = appData.requests.find(r => {
-                    if (String(r.userId) !== String(app.currentUser.id)) return false; 
+                    if (isReportRequest || app.isWorkReportRequest(r)) return false;
+                    if (String(r.userId) !== String(requestUser.id)) return false; 
                     if (['cancelled', 'rejected'].includes(r.status)) return false; 
                     if (app.editingId && String(r.id) === String(app.editingId)) return false;
+                    if (app.isTimeOffType(type) && app.isTimeOffConflictRequest(r)) return false;
 
                     const existingStart = moment(r.startDate);
                     const existingEnd = moment(r.endDate);
@@ -2800,6 +4691,9 @@
                 }
                 
                 let hours = 0, timeRange = '';
+                let reportCategory = '';
+                let requestedStartAt = '';
+                let requestedEndAt = '';
                 if(type==='연차') {
                     const days = selection.dayCountMode === 'calendar_days'
                         ? (moment(eDate).startOf('day').diff(moment(sDate).startOf('day'), 'days') + 1)
@@ -2808,13 +4702,13 @@
                     hours = days*8;
                 } else if(app.isHalfDayType(type)) {
                     hours = 4;
-                    const halfRange = app.buildHalfDayTimeRange(app.currentUser, sDate, type);
+                    const halfRange = app.buildHalfDayTimeRange(requestUser, sDate, type);
                     if (!halfRange) return alert('근무시간 정보를 확인할 수 없습니다.');
                     timeRange = `${halfRange.startHour}:00~${halfRange.endHour}:00`;
                 }
                 else if(type==='시간차(퇴근)') {
                     const d = parseInt(document.getElementById('req-duration-timeoff').value);
-                    const e = app.getTimeoffEndHourForDate(app.currentUser, sDate);
+                    const e = app.getTimeoffEndHourForDate(requestUser, sDate);
                     hours = d; timeRange = `${timeLogic.calcStart(d,e)}:00~${e}:00`;
                 } else if(type==='시간차(외출)') { 
                     const s = parseInt(document.getElementById('req-start-time-out').value, 10);
@@ -2822,15 +4716,70 @@
                     const e = calcOutEndTime(s, d);
                     if(e === null) return alert('근무시간(18:00) 안에서 설정해주세요.');
                     hours = d; timeRange = `${s}:00~${e}:00`;
+                } else if (type === '잔업') {
+                    const startHour = Number(app.getTimeoffEndHourForDate(requestUser, sDate));
+                    const duration = parseInt(document.getElementById('req-report-duration')?.value || '1', 10);
+                    const endHour = startHour + duration;
+                    if (!Number.isFinite(startHour) || !Number.isFinite(duration) || endHour > 24) return alert('잔업 시간을 다시 확인해주세요.');
+                    hours = duration;
+                    timeRange = `${formatHour(startHour)}~${formatHour(endHour)}`;
+                    reportCategory = 'overtime';
+                    requestedStartAt = formatHour(startHour);
+                    requestedEndAt = formatHour(endHour);
+                    eDate = sDate;
+                } else if (type === '특근') {
+                    const startHour = parseInt(document.getElementById('req-report-start-time')?.value || '9', 10);
+                    const duration = parseInt(document.getElementById('req-report-duration')?.value || '1', 10);
+                    const endHour = startHour + duration;
+                    if (!Number.isFinite(startHour) || !Number.isFinite(duration) || endHour > 24) return alert('특근 시간을 다시 확인해주세요.');
+                    hours = duration;
+                    timeRange = `${formatHour(startHour)}~${formatHour(endHour)}`;
+                    reportCategory = 'holiday_work';
+                    requestedStartAt = formatHour(startHour);
+                    requestedEndAt = formatHour(endHour);
+                    eDate = sDate;
                 } else {
                     return alert('연차 종류 오류');
+                }
+
+                if (!isReportRequest && app.isTimeOffType(type)) {
+                    const timeOffConflict = app.findTimeOffConflictRequest(requestUser, {
+                        type,
+                        startDate: sDate,
+                        timeRange
+                    }, {
+                        editingId: app.editingId || ''
+                    });
+                    if (timeOffConflict) {
+                        return alert(app.getTimeOffConflictMessage(timeOffConflict, type));
+                    }
+                }
+
+                const currentEditingRequest = app.editingId ? appData.requests.find(r => String(r.id) === String(app.editingId)) : null;
+                const retroMeta = app.buildRetroactiveRequestContext(requestUser, {
+                    type,
+                    startDate: sDate,
+                    hours,
+                    timeRange
+                });
+                let detailReason = '';
+                if (!isReportRequest && retroMeta.required) {
+                    detailReason = await app.promptRetroDetailReason({
+                        targetId: app.editingId || '',
+                        userName: requestUser.name,
+                        displayType: app.getRequestDisplayType({ type, specialLeaveTypeLabel: selection.specialLeaveTypeLabel }),
+                        periodText: app.formatRequestPeriodText({ startDate: sDate, endDate: eDate, timeRange }),
+                        kindLabel: retroMeta.kindLabel,
+                        initialValue: (currentEditingRequest && currentEditingRequest.detailReason) || ''
+                    });
+                    if (detailReason === null) return;
                 }
 
                 if (app.editingId) {
                     const idx = appData.requests.findIndex(r => String(r.id) === String(app.editingId));
                     if (idx !== -1) {
                         const oldReq = appData.requests[idx];
-                        const bucketSummary = app.getRequestBucketSummary(app.currentUser, selection, oldReq);
+                    const bucketSummary = app.getRequestBucketSummary(requestUser, selection, oldReq);
                         if (!bucketSummary.ok) return alert(bucketSummary.message);
                         if (hours > bucketSummary.availableHours) {
                             const bucketLabel = bucketSummary.bucket === 'special' ? bucketSummary.label : '연차';
@@ -2845,17 +4794,28 @@
                             hours,
                             timeRange: timeRange || '',
                             reason,
+                            detailReason,
+                            reportCategory,
+                            workDetail,
+                            requestDept,
+                            note,
+                            requestedStartAt,
+                            requestedEndAt,
+                            reportedHours: hours,
                             timestamp: new Date().toISOString(),
                             specialLeaveTypeKey: selection.specialLeaveTypeKey,
                             specialLeaveTypeLabel: selection.specialLeaveTypeLabel
                         });
-                        const savedEdit = await db.upsertReq(updatedReq, { keepOverlayOnSuccess: true, expectedStatus: 'pending' });
+                        const expectedStatus = isAdminProxy ? security.normalizeStatus(String(oldReq.status || 'pending')) : 'pending';
+                        const savedEdit = await db.upsertReq(updatedReq, { keepOverlayOnSuccess: true, expectedStatus });
                         if (!savedEdit) return;
-                        await app.logUserAction('RequestEdit', `${updatedReq.id}:${app.getRequestDisplayType(updatedReq)}:${updatedReq.startDate}`);
+                        await app.logUserAction(isAdminProxy ? 'AdminRequestEdit' : 'RequestEdit', `${updatedReq.id}:${app.getRequestDisplayType(updatedReq)}:${updatedReq.startDate}:${requestUser.id}`);
                         document.getElementById('req-modal').classList.add('hidden');
-                        app.refreshDashboard();
-                        const recipients = app.getMailRecipientsForRequester(app.currentUser);
-                        if (recipients.to) {
+                        app.adminRequestEditMode = false;
+                        if (app.currentView === 'master-permissions' && app.masterPermissionTab === 'ops') app.renderMasterPermissionPage();
+                        else app.refreshDashboard();
+                        const recipients = isAdminProxy ? { to: '', cc: [] } : app.getMailRecipientsForRequester(app.currentUser);
+                        if (!isReportRequest && recipients.to) {
                             const userRank = app.currentUser.rank || '';
                             const displayType = app.getRequestDisplayType(updatedReq);
                             const changeSummary = app.buildRequestChangeSummary(oldReq, updatedReq);
@@ -2864,34 +4824,42 @@
                             openOutlookDraft(recipients.to, subject, body, recipients.cc);
                             alert('수정되었습니다. 아웃룩 창이 뜨면 [보내기]를 눌러주세요.');
                         } else {
-                            alert('수정되었습니다.');
+                            alert(isReportRequest ? '보고가 수정되었습니다.' : (isAdminProxy ? '관리자 대리 수정이 완료되었습니다.' : '수정되었습니다.'));
                         }
                         document.getElementById('loading-overlay').style.display = 'none';
                     }
                 } else {
-                    const bucketSummary = app.getRequestBucketSummary(app.currentUser, selection, null);
+                    const bucketSummary = app.getRequestBucketSummary(requestUser, selection, null);
                     if (!bucketSummary.ok) return alert(bucketSummary.message);
-                    if (hours > bucketSummary.availableHours) {
+                    if (!isReportRequest && hours > bucketSummary.availableHours) {
                         const bucketLabel = bucketSummary.bucket === 'special' ? bucketSummary.label : '연차';
                         return alert(`잔여 ${bucketLabel} 부족\n(승인 대기 포함 잔여: ${app.fmtTime(bucketSummary.availableHours)})`);
                     }
                     
                     const newReq = security.sanitizeRequest({
-                        id: Date.now(), userId: app.currentUser.id, userName: app.currentUser.name, 
-                        dept: app.currentUser.dept, role: app.currentUser.role, type, startDate: sDate, endDate: eDate, 
-                        hours, timeRange: timeRange || '', reason, status: 'pending',
+                        id: Date.now(), userId: requestUser.id, userName: requestUser.name, 
+                        dept: requestUser.dept, role: requestUser.role, type, startDate: sDate, endDate: eDate, 
+                        hours, timeRange: timeRange || '', reason, detailReason, status: isReportRequest ? 'reported' : (isAdminProxy ? 'approved' : 'pending'),
+                        reportCategory,
+                        workDetail,
+                        requestDept,
+                        note,
+                        requestedStartAt,
+                        requestedEndAt,
+                        reportedHours: hours,
                         timestamp: new Date().toISOString(),
                         specialLeaveTypeKey: selection.specialLeaveTypeKey,
                         specialLeaveTypeLabel: selection.specialLeaveTypeLabel
                     });
                     const savedNew = await db.upsertReq(newReq, { keepOverlayOnSuccess: true });
                     if (!savedNew) return;
-                    await app.logUserAction('RequestCreate', `${newReq.id}:${app.getRequestDisplayType(newReq)}:${newReq.startDate}`);
+                    await app.logUserAction(isAdminProxy ? 'AdminRequestCreate' : 'RequestCreate', `${newReq.id}:${app.getRequestDisplayType(newReq)}:${newReq.startDate}:${requestUser.id}`);
                     document.getElementById('req-modal').classList.add('hidden');
-                    app.refreshDashboard();
+                    if (app.currentView === 'master-permissions' && app.masterPermissionTab === 'ops') app.renderMasterPermissionPage();
+                    else app.refreshDashboard();
 
-                    const recipients = app.getMailRecipientsForRequester(app.currentUser);
-                    if(recipients.to) {
+                    const recipients = isAdminProxy ? { to: '', cc: [] } : app.getMailRecipientsForRequester(app.currentUser);
+                    if(!isReportRequest && recipients.to) {
                         const userRank = app.currentUser.rank || '';
                         const displayType = app.getRequestDisplayType(newReq);
                         const subject = `[연차신청] ${app.currentUser.name} ${userRank} - ${displayType}`;
@@ -2899,7 +4867,7 @@
                         const body = `연차가 신청 되었습니다.\n\n접속주소: ${window.location.origin}/\n\n[신청 내용]\n- 이름: ${app.currentUser.name} ${userRank}\n- 종류: ${displayType}\n- 기간: ${dateRange} ${timeRange ? '('+timeRange+')' : ''}\n- 사유: ${reason}`;
                         openOutlookDraft(recipients.to, subject, body, recipients.cc);
                         alert('저장이 완료되었습니다. 아웃룩 창이 뜨면 [보내기]를 눌러주세요.');
-                    } else { alert('저장이 완료되었습니다.'); }
+                    } else { alert(isReportRequest ? '보고가 저장되었습니다.' : (isAdminProxy ? '관리자 대리 등록이 즉시 반영되었습니다.' : '저장이 완료되었습니다.')); }
                     document.getElementById('loading-overlay').style.display = 'none';
                 }
             } catch (err) {
@@ -2907,6 +4875,15 @@
                 const msg = String((err && err.message) || '');
                 if (msg.startsWith('REQUEST_DUPLICATE_CONFLICT:')) {
                     const parts = msg.split(':');
+                    const duplicateType = security.normalizeType(parts[3] || '');
+                    const duplicateTimeRange = security.cleanText(parts.slice(4).join(':') || '');
+                    if (app.isTimeOffType(duplicateType)) {
+                        const fakeReq = { type: duplicateType, timeRange: duplicateTimeRange };
+                        alert(app.getTimeOffConflictMessage(fakeReq, type));
+                        await db.loadDeferred();
+                        app.refreshDashboard();
+                        return;
+                    }
                     await app.handleDuplicateRequestConflict(parts[1] || '', parts[2] || parts[1] || '');
                     return;
                 }
@@ -3089,12 +5066,16 @@
             });
 
             if(!inputUser.id || !inputUser.name || !inputUser.password) return alert('필수 입력 누락');
+            if (!inputUser.workQ1 || !inputUser.workQ2 || !inputUser.workQ3 || !inputUser.workQ4) {
+                return alert('근무시간 분기(Q1~Q4) 중 미등록 항목이 있습니다. 모두 입력 후 저장해 주세요.');
+            }
             if(inputUser.password.length < 4) return alert('비밀번호는 4자 이상으로 입력하세요.');
             if(!security.isValidEmail(inputUser.email)) return alert('이메일 형식이 올바르지 않습니다.');
             if(appData.users.some(u => String(u.id) === String(inputUser.id))) return alert('이미 존재하는 ID입니다.');
 
             const days = parseFloat(rawDays || 15);
             const totalHours = Number.isFinite(days) && days > 0 ? days * 8 : 15 * 8;
+            if (!confirm(`"${inputUser.name}" 사용자를 등록하시겠습니까?`)) return;
             try {
                 await db.upsertUser({
                     ...inputUser,
@@ -3347,12 +5328,13 @@
 
         deleteUser: async (id) => {
             if (!app.hasUserManagePermission()) return alert('구성원 관리 권한이 없습니다.');
-            if(!confirm('삭제하시겠습니까?')) return;
             const safeId = security.cleanInlineValue(id);
             if (!app.canManageTargetUser(safeId)) return alert('해당 구성원 삭제 권한이 없습니다.');
             const target = appData.users.find(u => String(u.id) === String(safeId));
             if (!target) return alert('사용자를 찾을 수 없습니다.');
             if (target.role === 'master') return alert('마스터 계정은 삭제할 수 없습니다.');
+            if (!confirm('삭제하시겠습니까?')) return;
+            if (!confirm(`"${target.name}" 사용자를 정말 삭제하겠습니까?`)) return;
             appData.users = appData.users.filter(u => String(u.id) !== String(safeId));
             await db.saveUsers();
             await app.logUserAction('UserDelete', `${safeId}:${target.name}`);
@@ -3372,12 +5354,31 @@
             const year = app.viewYear, month = app.viewMonth, today = moment().startOf('day');
             const calendarData = app.buildMonthlyCalendarData(requests, viewer, year, month);
             const displayToggle = app.renderCalendarDisplayToggle();
+            const calendarModeLabel = app.getCalendarModeLabel();
+            const calendarTitle = app.calendarMode === 'workreport' ? '잔업/특근 현황' : '연차 현황';
             const titleClass = app.isMobileViewport ? 'text-lg' : 'text-2xl';
             const deptClass = app.isMobileViewport ? 'text-sm' : 'text-base';
-            let html = `<div class="bg-white rounded-xl shadow-sm border border-gray-200 mb-6 overflow-hidden"><div class="px-4 pt-3 border-b border-gray-200 bg-gray-50/60 flex flex-wrap items-end justify-between gap-2">${app.renderCalendarTabs()}<div class="flex flex-wrap items-center justify-end gap-2 pb-1">${displayToggle}<label class="inline-flex items-center cursor-pointer"><input type="checkbox" ${app.showPastShading ? 'checked' : ''} onchange="app.togglePastShading()" class="sr-only peer"><div class="relative w-9 h-5 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-indigo-600"></div><span class="ms-2 text-xs font-medium text-gray-500">지난 날짜 음영</span></label></div></div><div class="px-4 py-3 border-b border-gray-200 flex items-center"><button onclick="app.changeMonth(-1)" class="w-10 h-10 rounded-full hover:bg-gray-100 flex items-center justify-center transition"><i class="fa-solid fa-chevron-left text-gray-600"></i></button><h3 class="${titleClass} font-bold text-gray-800 mx-4">${year}년 ${month+1}월 <span class="${deptClass} font-normal text-gray-500">(${viewer.dept})</span></h3><button onclick="app.changeMonth(1)" class="w-10 h-10 rounded-full hover:bg-gray-100 flex items-center justify-center transition"><i class="fa-solid fa-chevron-right text-gray-600"></i></button></div>`;
+            const cardHeader = `<div class="px-4 pt-3 border-b border-gray-200 bg-gray-50/60 flex flex-wrap items-end justify-between gap-2">${app.renderCalendarTabs()}<div class="flex flex-wrap items-center justify-end gap-2 pb-1">${displayToggle}<label class="inline-flex items-center cursor-pointer"><input type="checkbox" ${app.showPastShading ? 'checked' : ''} onchange="app.togglePastShading()" class="sr-only peer"><div class="relative w-9 h-5 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-indigo-600"></div><span class="ms-2 text-xs font-medium text-gray-500">지난 날짜 음영</span></label></div></div><div class="px-4 py-3 border-b border-gray-200 flex items-center"><button onclick="app.changeMonth(-1)" class="w-10 h-10 rounded-full hover:bg-gray-100 flex items-center justify-center transition"><i class="fa-solid fa-chevron-left text-gray-600"></i></button><h3 class="${titleClass} font-bold text-gray-800 mx-4">${year}년 ${month+1}월 <span class="${deptClass} font-normal text-gray-500">(${calendarModeLabel})</span></h3><button onclick="app.changeMonth(1)" class="w-10 h-10 rounded-full hover:bg-gray-100 flex items-center justify-center transition"><i class="fa-solid fa-chevron-right text-gray-600"></i></button></div>`;
             if (app.isMobileViewport && app.calendarDisplayMode === 'list') {
-                return html + app.renderCalendarListView(calendarData, viewer, year, month) + `</div>`;
+                const listBody = cardHeader + app.renderCalendarListView(calendarData, viewer, year, month);
+                const isOpen = !!app.mobileCalendarOpen;
+                return `<div class="bg-white rounded-xl shadow-sm border border-gray-200 mb-6 overflow-hidden">
+                    <div class="px-4 py-4 ${isOpen ? 'border-b border-indigo-100' : ''} bg-indigo-50/70">
+                        <button onclick="app.toggleMobileCalendarOpen()" class="w-full flex items-center justify-between gap-3 text-left">
+                            <div class="min-w-0">
+                                <h3 class="font-bold text-indigo-800 flex items-center"><i class="fa-solid fa-calendar-days mr-2 text-indigo-600"></i> ${calendarTitle} / ${calendarModeLabel}</h3>
+                                <p class="mt-1 text-xs text-indigo-600">리스트</p>
+                            </div>
+                            <div class="flex items-center gap-2 shrink-0">
+                                <span class="text-xs font-bold text-indigo-700">${isOpen ? '접기' : '펼치기'}</span>
+                                <i class="fa-solid ${isOpen ? 'fa-chevron-up' : 'fa-chevron-down'} text-xs text-indigo-600"></i>
+                            </div>
+                        </button>
+                    </div>
+                    ${isOpen ? listBody : ''}
+                </div>`;
             }
+            let html = cardHeader;
             html += `<div class="calendar-grid"><div class="calendar-header-cell text-red-500">일</div><div class="calendar-header-cell">월</div><div class="calendar-header-cell">화</div><div class="calendar-header-cell">수</div><div class="calendar-header-cell">목</div><div class="calendar-header-cell">금</div><div class="calendar-header-cell text-blue-500">토</div>`;
             const firstDayIdx = new Date(year, month, 1).getDay(); const lastDate = new Date(year, month + 1, 0).getDate();
             for(let i=0; i<firstDayIdx; i++) html += `<div class="calendar-cell bg-gray-50/50"></div>`;
@@ -3412,24 +5413,63 @@
                 }).join('');
                 const canSelectDate = app.canSelectCalendarDate(dateStr);
                 const todayClass = isToday ? 'calendar-cell-today' : '';
-                const selectedClass = canSelectDate && app.selectedCalendarDate === dateStr ? 'calendar-cell-selected' : '';
-                const clickAttr = canSelectDate ? `onclick="app.setSelectedCalendarDate('${dateStr}')"` : '';
+                const selectedClass = app.selectedCalendarDate === dateStr ? 'calendar-cell-selected' : '';
+                const clickAttr = app.isMobileViewport
+                    ? `onclick="app.openMobileCalendarDayDetail('${dateStr}')"`
+                    : (canSelectDate ? `onclick="app.setSelectedCalendarDate('${dateStr}')"` : '');
                 const dblClickAttr = app.canUseCalendarClickRequest() ? `ondblclick="app.handleCalendarDateDoubleClick('${dateStr}')"` : '';
-                html += `<div class="calendar-cell hover:bg-gray-50 ${applyShading ? 'bg-gray-50' : ''} ${todayClass} ${selectedClass}" data-cal-date="${dateStr}" ${clickAttr} ${dblClickAttr} onmouseenter="app.showTooltip('${dateStr}', event)" onmousemove="app.moveTooltip(event)" onmouseleave="app.hideTooltip()"><div class="flex justify-between items-start mb-1 ${applyShading ? 'opacity-40' : ''}"><span class="text-sm font-bold ml-1 mt-1 ${isToday?'today-circle':(isRed?'holiday-text':(isSat?'sat-text':'text-gray-700'))}">${d}</span>${holName ? `<span class="text-[10px] text-white bg-red-400 px-1 rounded truncate max-w-[60px]">${holName}</span>` : ''}</div><div class="grid grid-cols-2 gap-1 overflow-y-auto max-h-[100px] px-1 custom-scrollbar ${applyShading ? 'opacity-60 grayscale' : ''}">${evtHtml}</div></div>`;
+                const hoverAttrs = app.isMobileViewport ? '' : `onmouseenter="app.showTooltip('${dateStr}', event)" onmousemove="app.moveTooltip(event)" onmouseleave="app.hideTooltip()"`;
+                const eventBody = app.isMobileViewport
+                    ? `<div class="${applyShading ? 'opacity-60 grayscale' : ''}">${app.renderMobileCalendarDaySummary(evts)}</div>`
+                    : `<div class="grid grid-cols-2 gap-1 overflow-y-auto max-h-[100px] px-1 custom-scrollbar ${applyShading ? 'opacity-60 grayscale' : ''}">${evtHtml}</div>`;
+                html += `<div class="calendar-cell hover:bg-gray-50 ${applyShading ? 'bg-gray-50' : ''} ${todayClass} ${selectedClass}" data-cal-date="${dateStr}" ${clickAttr} ${dblClickAttr} ${hoverAttrs}><div class="flex justify-between items-start mb-1 ${applyShading ? 'opacity-40' : ''}"><span class="text-sm font-bold ml-1 mt-1 ${isToday?'today-circle':(isRed?'holiday-text':(isSat?'sat-text':'text-gray-700'))}">${d}</span>${holName ? `<span class="text-[10px] text-white bg-red-400 px-1 rounded truncate max-w-[60px]">${holName}</span>` : ''}</div>${eventBody}</div>`;
             }
-            return html + `</div>`;
+            html += `</div>`;
+            if (!app.isMobileViewport) {
+                return `<div class="bg-white rounded-xl shadow-sm border border-gray-200 mb-6 overflow-hidden">${html}</div>`;
+            }
+            const isOpen = !!app.mobileCalendarOpen;
+            return `<div class="bg-white rounded-xl shadow-sm border border-gray-200 mb-6 overflow-hidden">
+                <div class="px-4 py-4 ${isOpen ? 'border-b border-indigo-100' : ''} bg-indigo-50/70">
+                    <button onclick="app.toggleMobileCalendarOpen()" class="w-full flex items-center justify-between gap-3 text-left">
+                        <div class="min-w-0">
+                            <h3 class="font-bold text-indigo-800 flex items-center"><i class="fa-solid fa-calendar-days mr-2 text-indigo-600"></i> 연차 현황 / ${calendarModeLabel}</h3>
+                            <p class="mt-1 text-xs text-indigo-600">월간 달력</p>
+                        </div>
+                        <div class="flex items-center gap-2 shrink-0">
+                            <span class="text-xs font-bold text-indigo-700">${isOpen ? '접기' : '펼치기'}</span>
+                            <i class="fa-solid ${isOpen ? 'fa-chevron-up' : 'fa-chevron-down'} text-xs text-indigo-600"></i>
+                        </div>
+                    </button>
+                </div>
+                ${isOpen ? html : ''}
+            </div>`;
+        },
+
+        renderDashboardQuickActions: (options = {}) => {
+            const includeAnnual = options.includeAnnual !== false;
+            const buttons = [];
+            if (app.isAnyWorkReportFeatureEnabled()) {
+                buttons.push(`<button onclick="app.openReportBoard()" class="w-full sm:w-auto bg-slate-700 text-white px-5 py-2.5 rounded-lg font-bold shadow-md shadow-slate-200"><i class="fa-regular fa-clock mr-2"></i> 잔업/특근신청</button>`);
+            }
+            if (includeAnnual) {
+                buttons.push(`<button onclick="app.openRequestModal()" class="w-full sm:w-auto bg-indigo-600 text-white px-6 py-2.5 rounded-lg font-bold shadow-md shadow-indigo-200"><i class="fa-solid fa-plus mr-2"></i> 연차 신청</button>`);
+            }
+            if (!buttons.length) return '';
+            return `<div class="mb-4 flex flex-col sm:flex-row justify-end gap-2">${buttons.join('')}</div>`;
         },
 
         renderEmployeeDashboard: () => {
             const u = app.currentUser, reqs = app.sortRequestsByRecent(appData.requests.filter(r=>String(r.userId)===String(u.id)));
             // [수정] 승인 대기 연차 표시 및 3단계 현황판 적용 (Case C)
             const myStatusCard = app.renderMyStatusCard(u, {
-                titleClass: 'text-2xl',
-                remainClass: 'text-4xl',
+                titleClass: app.isMobileViewport ? 'text-xl' : 'text-2xl',
+                remainClass: app.isMobileViewport ? 'text-3xl' : 'text-4xl',
+                totalClass: app.isMobileViewport ? 'text-sm' : 'text-lg',
                 subtitle: app.getEnglishRoleLabel(u)
             });
             const recentRequestSection = app.renderRecentRequestList('최근 신청 내역', reqs, '내역 없음');
-            document.getElementById('app-container').innerHTML = `<div class="w-full max-w-7xl mx-auto px-4 fade-in pt-8 pb-12">${myStatusCard}<div class="mb-4 flex justify-end"><button onclick="app.openRequestModal()" class="w-full sm:w-auto bg-indigo-600 text-white px-6 py-2.5 rounded-lg font-bold shadow-md shadow-indigo-200"><i class="fa-solid fa-plus mr-2"></i> 연차 신청</button></div><div class="mb-10">${app.renderCal(appData.requests, u)}</div>${recentRequestSection}</div>${app.getModal()}`;
+            document.getElementById('app-container').innerHTML = `<div class="w-full max-w-7xl mx-auto px-4 fade-in pt-8 pb-12">${myStatusCard}${app.renderDashboardQuickActions({ includeAnnual: true })}<div class="mb-10">${app.renderCal(appData.requests, u)}</div>${recentRequestSection}</div>${app.getModal()}`;
             app.initModal();
         },
 
@@ -3477,7 +5517,7 @@
                         : `<h3 class="font-bold ${titleColor} flex items-center"><i class="fa-solid fa-users mr-2 ${iconColor}"></i> 팀원 연차 현황 / ${deptName}</h3>`;
                     const controlsClass = isMobileCollapsed ? 'flex items-center gap-2 ml-auto' : 'flex items-center gap-3';
                     const contentClass = isOpen ? 'grid' : 'hidden';
-                    return `<div class="${bgStyle} p-5 rounded-xl shadow-sm border mb-8"><div class="flex justify-between items-center mb-4 gap-3">${collapseButton}<div class="${controlsClass}" ${isMobileCollapsed ? 'onclick="event.stopPropagation()"' : ''}><label class="inline-flex items-center cursor-pointer"><input type="checkbox" class="sr-only peer" onchange="app.toggleUsage()" ${app.showUsage ? 'checked' : ''}><div class="relative w-9 h-5 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-indigo-600"></div>${isMobileCollapsed ? '' : '<span class="ms-2 text-xs font-medium text-gray-500">사용 내역</span>'}</label>${isMobileCollapsed ? '' : `<span class="text-[11px] ${cardFeatureEnabled ? 'text-indigo-600' : 'text-gray-400'}">${cardFeatureEnabled ? '직원 카드 켜짐' : '직원 카드 꺼짐'}</span>`}</div></div><div class="${contentClass} grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">${deptMembers.map(m => { const safeId = security.cleanInlineValue(m.id); const clickAttr = cardFeatureEnabled ? `onclick=\"app.openMemberCard('${safeId}')\"` : ''; const isSelected = cardFeatureEnabled && String(app.selectedMemberId) === String(safeId); const selectedClass = isSelected ? 'member-card-selected' : ''; const cardClass = cardFeatureEnabled ? 'cursor-pointer hover:shadow-md hover:border-indigo-200' : 'cursor-default'; const absenceState = app.getMemberAbsenceState(m); const absentClass = absenceState.absent ? 'member-card-absent' : ''; const absenceBadge = absenceState.absent ? `<div class="member-absence-badge">${absenceState.label}</div>` : ''; const usedGaugePercent = app.getUsageGaugePercent(m.usedHours, m.totalHours); const usedGaugeText = usedGaugePercent.toFixed(0).replace(/\.0$/, ''); const usedGaugeWidth = usedGaugePercent <= 0 ? '0%' : (usedGaugePercent < 3 ? '3%' : `${usedGaugePercent}%`); const specialLeaveSummary = app.renderSpecialLeaveSummary(m, { compact: true }); return `<div data-member-card="1" data-member-id="${safeId}" class="bg-white border border-white/50 rounded-lg p-3 shadow-sm transition ${cardClass} ${selectedClass} ${absentClass} group" ${clickAttr} onmouseenter="app.showMemberHistory('${safeId}', event)" onmousemove="app.moveTooltip(event)" onmouseleave="app.hideTooltip()"><div class="flex justify-between items-start gap-3"><div class="min-w-0 flex-1 pr-2"><div class="flex items-center gap-2 min-w-0"><div class="font-bold text-gray-800 truncate">${m.name} <span class="text-xs text-gray-500">(${app.getUserTitleText(m)})</span></div>${absenceBadge}</div>${app.showUsage ? `<div class="mt-1 text-xs font-bold text-green-600 bg-green-50 px-2 py-0.5 rounded inline-block">사용: ${app.fmtTime(m.usedHours)}</div>` : ''}</div><div class="flex min-w-[150px] flex-col items-end text-right shrink-0"><div class="text-sm font-bold ${m.totalHours-m.usedHours<0?'text-red-600':'text-indigo-600'}">${app.fmtTime(m.totalHours-m.usedHours)} 남음</div><div class="text-[10px] text-gray-400 mt-0.5">/ 총 ${app.fmtTime(m.totalHours)}</div>${specialLeaveSummary ? `<div class="mt-1.5 space-y-0.5">${specialLeaveSummary}</div>` : ''}</div></div><div class="mt-3 flex items-center gap-2"><div class="h-2.5 flex-1 rounded-full bg-slate-100 border border-slate-200 overflow-hidden"><div class="h-full rounded-full bg-indigo-500 transition-all duration-300" style="width:${usedGaugeWidth}; ${usedGaugePercent <= 0 ? 'display:none;' : ''}"></div></div><div class="text-[10px] font-bold text-gray-400 min-w-[28px] text-right">${usedGaugeText}%</div></div></div>`; }).join('')}</div></div>`;
+                    return `<div class="${bgStyle} p-5 rounded-xl shadow-sm border mb-8"><div class="flex justify-between items-center mb-4 gap-3">${collapseButton}<div class="${controlsClass}" ${isMobileCollapsed ? 'onclick="event.stopPropagation()"' : ''}><label class="inline-flex items-center cursor-pointer"><input type="checkbox" class="sr-only peer" onchange="app.toggleUsage()" ${app.showUsage ? 'checked' : ''}><div class="relative w-9 h-5 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-indigo-600"></div>${isMobileCollapsed ? '' : '<span class="ms-2 text-xs font-medium text-gray-500">사용 내역</span>'}</label>${isMobileCollapsed ? '' : `<span class="text-[11px] ${cardFeatureEnabled ? 'text-indigo-600' : 'text-gray-400'}">${cardFeatureEnabled ? '직원 카드 켜짐' : '직원 카드 꺼짐'}</span>`}</div></div><div class="${contentClass} grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">${deptMembers.map(m => { const safeId = security.cleanInlineValue(m.id); const clickAttr = cardFeatureEnabled ? `onclick=\"app.openMemberCard('${safeId}')\"` : ''; const isSelected = cardFeatureEnabled && String(app.selectedMemberId) === String(safeId); const selectedClass = isSelected ? 'member-card-selected' : ''; const cardClass = cardFeatureEnabled ? 'cursor-pointer hover:shadow-md hover:border-indigo-200' : 'cursor-default'; const absenceState = app.getMemberAbsenceState(m); const absentClass = absenceState.absent ? 'member-card-absent' : ''; const absenceBadge = absenceState.absent ? `<div class="member-absence-badge">${absenceState.label}</div>` : ''; const usedGaugePercent = app.getUsageGaugePercent(m.usedHours, m.totalHours); const usedGaugeText = usedGaugePercent.toFixed(0).replace(/\.0$/, ''); const usedGaugeWidth = usedGaugePercent <= 0 ? '0%' : (usedGaugePercent < 3 ? '3%' : `${usedGaugePercent}%`); const specialLeaveSummary = app.renderSpecialLeaveSummary(m, { compact: true }); const specialLeaveFooter = specialLeaveSummary ? `<div class="mt-2 pt-2 border-t border-emerald-100"><div class="space-y-1">${specialLeaveSummary}</div></div>` : ''; return `<div data-member-card="1" data-member-id="${safeId}" class="bg-white border border-white/50 rounded-lg p-3 shadow-sm transition ${cardClass} ${selectedClass} ${absentClass} group" ${clickAttr} onmouseenter="app.showMemberHistory('${safeId}', event)" onmousemove="app.moveTooltip(event)" onmouseleave="app.hideTooltip()"><div class="flex justify-between items-start gap-3"><div class="min-w-0 flex-1 pr-2"><div class="flex items-center gap-2 min-w-0"><div class="font-bold text-gray-800 truncate">${m.name} <span class="text-xs text-gray-500">(${app.getUserTitleText(m)})</span></div>${absenceBadge}</div>${app.showUsage ? `<div class="mt-1 text-xs font-bold text-green-600 bg-green-50 px-2 py-0.5 rounded inline-block">사용: ${app.fmtTime(m.usedHours)}</div>` : ''}</div><div class="flex min-w-[150px] flex-col items-end text-right shrink-0"><div class="text-sm font-bold ${m.totalHours-m.usedHours<0?'text-red-600':'text-indigo-600'}">${app.fmtTime(m.totalHours-m.usedHours)} 남음</div><div class="text-[10px] text-gray-400 mt-0.5">/ 총 ${app.fmtTime(m.totalHours)}</div></div></div><div class="mt-3 flex items-center gap-2"><div class="h-2.5 flex-1 rounded-full bg-slate-100 border border-slate-200 overflow-hidden"><div class="h-full rounded-full bg-indigo-500 transition-all duration-300" style="width:${usedGaugeWidth}; ${usedGaugePercent <= 0 ? 'display:none;' : ''}"></div></div><div class="text-[10px] font-bold text-gray-400 min-w-[28px] text-right">${usedGaugeText}%</div></div>${specialLeaveFooter}</div>`; }).join('')}</div></div>`;
                 }).join('');
             }
             
@@ -3495,7 +5535,7 @@
             else if (isEffectiveCEO) dashboardTitle = '대표 대시보드';
 
             const approvalSection = !canApprove ? '' : `<div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8"><div class="bg-white rounded-xl shadow-sm border p-5"><div class="flex justify-between items-center mb-4"><h3 class="font-bold text-indigo-800 flex items-center"><i class="fa-regular fa-clock mr-2"></i> 결재 대기</h3><button onclick="app.approveAll('pending')" class="text-xs bg-indigo-600 text-white px-3 py-1.5 rounded hover:bg-indigo-700 font-bold transition">모두 승인</button></div><div class="space-y-3">${pendings.filter(r=>r.status==='pending').map(r=> { const displayType = app.getRequestDisplayType(r); return `<div class="border border-sky-200 bg-sky-50/70 p-4 rounded-lg flex justify-between items-center"><div><span class="font-bold">${r.userName}</span> <span class="text-xs text-gray-500">${r.dept}</span><div class="text-sm text-indigo-600 font-bold mt-1">${displayType} | ${r.reason}</div><div class="text-xs text-gray-400 mt-1">${app.fmtDate(r.startDate)}${r.startDate!==r.endDate ? ' ~ '+app.fmtDate(r.endDate) : ''}</div></div><div class="flex flex-col gap-1"><button onclick="app.processReq('${r.id}','approve')" class="bg-indigo-600 text-white px-3 py-1.5 rounded text-xs font-bold">승인</button><button onclick="app.processReq('${r.id}','reject')" class="bg-gray-100 text-gray-600 px-3 py-1.5 rounded text-xs">반려</button></div></div>`; }).join('') || '<div class="text-center text-gray-400 py-4">대기 없음</div>'}</div></div><div class="bg-white rounded-xl shadow-sm border p-5"><div class="flex justify-between items-center mb-4"><h3 class="font-bold text-red-600 flex items-center"><i class="fa-solid fa-triangle-exclamation mr-2"></i> 취소 요청</h3><button onclick="app.approveAll('cancel')" class="text-xs bg-red-600 text-white px-3 py-1.5 rounded hover:bg-red-700 font-bold transition">모두 승인</button></div><div class="space-y-3">${pendings.filter(r=>r.status==='cancel_requested').map(r=>`<div class="border border-amber-200 bg-amber-50/80 p-4 rounded-lg flex justify-between items-center"><div><span class="font-bold">${r.userName}</span><div class="text-xs text-red-500 font-bold mt-1">취소 요청됨</div><div class="text-xs text-gray-400">${app.fmtDate(r.startDate)}</div></div><div class="flex flex-col gap-1"><button onclick="app.processReq('${r.id}','cancel_approve')" class="bg-red-600 text-white px-3 py-1.5 rounded text-xs font-bold">취소 승인</button><button onclick="app.processReq('${r.id}','cancel_reject')" class="bg-white border px-3 py-1.5 rounded text-xs">반려</button></div></div>`).join('') || '<div class="text-center text-gray-400 py-4">요청 없음</div>'}</div></div></div>`;
-            const managerQuickAction = isEffectiveCEO ? '' : `<div class="mb-4 flex justify-end"><button onclick="app.openRequestModal()" class="w-full sm:w-auto bg-indigo-600 text-white px-6 py-2.5 rounded-lg font-bold shadow-md shadow-indigo-200"><i class="fa-solid fa-plus mr-2"></i> 연차 신청</button></div>`;
+            const managerQuickAction = app.renderDashboardQuickActions({ includeAnnual: !isEffectiveCEO });
             document.getElementById('app-container').innerHTML = `<div class="w-full max-w-7xl mx-auto px-4 fade-in pt-8 pb-12"><div class="flex justify-between items-center mb-6"><h2 class="text-2xl font-bold">${dashboardTitle}</h2></div>${myStatusCard}${managerQuickAction}<div class="mb-8">${app.renderCal(appData.requests, app.currentUser)}</div>${approvalSection}${myReqsSection}${memberStatusHtml}</div>${app.getModal()}`;
             app.initModal();
         },
@@ -3542,10 +5582,22 @@
                     calendarManual: getCheckedOrExisting(`perm-cal-manual-${safeId}`, existingPerms.calendarManual),
                     calendarParts: getCheckedOrExisting(`perm-cal-parts-${safeId}`, existingPerms.calendarParts),
                     calendarAll: getCheckedOrExisting(`perm-cal-all-${safeId}`, existingPerms.calendarAll),
+                    calendarRejected: getCheckedOrExisting(`perm-cal-rejected-${safeId}`, existingPerms.calendarRejected),
+                    calendarWorkReport: getCheckedOrExisting(`perm-cal-workreport-${safeId}`, existingPerms.calendarWorkReport),
                     approveScope: existingPerms.approveScope,
                     memberStatusScope: existingPerms.memberStatusScope,
-                    canAccessMasterSettings: getCheckedOrExisting(`perm-master-access-${safeId}`, existingPerms.canAccessMasterSettings),
-                    canManageUsers: getCheckedOrExisting(`perm-manage-${safeId}`, existingPerms.canManageUsers)
+                    canAccessSituationBoard: existingPerms.canAccessSituationBoard,
+                    canAccessSituationBoardDesktop: getCheckedOrExisting(`perm-situation-desktop-${safeId}`, existingPerms.canAccessSituationBoardDesktop),
+                    canAccessSituationBoardMobile: getCheckedOrExisting(`perm-situation-mobile-${safeId}`, existingPerms.canAccessSituationBoardMobile),
+                    canAccessMasterSettings: existingPerms.canAccessMasterSettings,
+                    canManageUsers: existingPerms.canManageUsers,
+                    canAccessMasterSettingsDesktop: getCheckedOrExisting(`perm-master-access-desktop-${safeId}`, existingPerms.canAccessMasterSettingsDesktop),
+                    canManageUsersDesktop: getCheckedOrExisting(`perm-manage-desktop-${safeId}`, existingPerms.canManageUsersDesktop),
+                    canAccessMasterSettingsMobile: getCheckedOrExisting(`perm-master-access-mobile-${safeId}`, existingPerms.canAccessMasterSettingsMobile),
+                    canManageUsersMobile: getCheckedOrExisting(`perm-manage-mobile-${safeId}`, existingPerms.canManageUsersMobile),
+                    canAccessAdminOps: existingPerms.canAccessAdminOps,
+                    canAccessAdminOpsDesktop: getCheckedOrExisting(`perm-admin-ops-desktop-${safeId}`, existingPerms.canAccessAdminOpsDesktop),
+                    canAccessAdminOpsMobile: getCheckedOrExisting(`perm-admin-ops-mobile-${safeId}`, existingPerms.canAccessAdminOpsMobile)
                 };
 
                 const approveAllEl = document.getElementById(`perm-approve-all-${safeId}`);
@@ -3568,9 +5620,13 @@
                     else permissions.memberStatusScope = 'none';
                 }
 
-                if (!permissions.calendarSelf && !permissions.calendarManual && !permissions.calendarParts && !permissions.calendarAll) {
+                if (!permissions.calendarSelf && !permissions.calendarManual && !permissions.calendarParts && !permissions.calendarAll && !permissions.calendarRejected && !permissions.calendarWorkReport) {
                     permissions.calendarSelf = true;
                 }
+                permissions.canAccessSituationBoard = !!(permissions.canAccessSituationBoardDesktop || permissions.canAccessSituationBoardMobile);
+                permissions.canAccessMasterSettings = !!(permissions.canAccessMasterSettingsDesktop || permissions.canAccessMasterSettingsMobile);
+                permissions.canManageUsers = !!(permissions.canManageUsersDesktop || permissions.canManageUsersMobile);
+                permissions.canAccessAdminOps = !!(permissions.canAccessAdminOpsDesktop || permissions.canAccessAdminOpsMobile);
 
                 return security.sanitizeUser({
                     ...user,
@@ -3637,6 +5693,7 @@
             { label: '조의(백숙부모)', typeKey: 'condolence_1', grantHours: 8, requestMode: 'day_only', allowHolidayRequest: true, dayCountMode: 'calendar_days', color: 'slate' }
         ]),
         applyCeremonialPresetTypes: () => {
+            app.specialLeaveSettingsOpen = true;
             const wrap = document.getElementById('special-leave-type-settings-list');
             if (!wrap) return;
             const existingKeys = new Set([...wrap.querySelectorAll('[data-special-type-key]')].map((row) => security.normalizeSpecialLeaveTypeKey(row.getAttribute('data-special-type-key'))).filter(Boolean));
@@ -3659,6 +5716,7 @@
             alert(`경조휴가 기본 세트 ${addedCount}개를 추가했습니다.`);
         },
         addSpecialLeaveTypeFromInput: () => {
+            app.specialLeaveSettingsOpen = true;
             const input = document.getElementById('special-leave-new-type-label');
             if (!input) return;
             const label = security.cleanText(input.value);
@@ -3671,6 +5729,10 @@
             wrap.insertAdjacentHTML('beforeend', app.renderSpecialLeaveTypeSettingRow({ label, enabled: true }, nextIndex));
             input.value = '';
             input.focus();
+        },
+        toggleSpecialLeaveSettings: () => {
+            app.specialLeaveSettingsOpen = !app.specialLeaveSettingsOpen;
+            app.renderMasterPermissionPage();
         },
         renderSpecialLeaveTypeSettingRow: (type, index = 0) => {
             const draft = app.buildSpecialLeaveTypeDraft(type, index);
@@ -3752,9 +5814,13 @@
             const memberCardToggle = document.getElementById('global-member-card-toggle');
             const homepageToggle = document.getElementById('global-homepage-toggle');
             const boardToggle = document.getElementById('global-board-toggle');
+            const overtimeToggle = document.getElementById('global-overtime-toggle');
+            const holidayWorkToggle = document.getElementById('global-holiday-work-toggle');
             const memberCardEnabled = memberCardToggle ? memberCardToggle.checked : app.isMemberCardFeatureEnabled();
             const homepageEnabled = homepageToggle ? homepageToggle.checked : app.isHomepageFeatureEnabled();
             const boardEnabled = boardToggle ? boardToggle.checked : app.isBoardFeatureEnabled();
+            const overtimeEnabled = overtimeToggle ? overtimeToggle.checked : app.isOvertimeFeatureEnabled();
+            const holidayWorkEnabled = holidayWorkToggle ? holidayWorkToggle.checked : app.isHolidayWorkFeatureEnabled();
             const specialLeaveTypes = app.collectSpecialLeaveTypesFromSettings();
             const labelSet = new Set();
             for (const type of specialLeaveTypes) {
@@ -3781,6 +5847,8 @@
                     featureMemberCard: memberCardEnabled,
                     featureHomepage: homepageEnabled,
                     featureBoard: boardEnabled,
+                    featureOvertime: overtimeEnabled,
+                    featureHolidayWork: holidayWorkEnabled,
                     permissions: security.sanitizePermissions(masterUser.permissions || {}, 'master', masterUser.dept)
                 }, {
                     keepOverlayOnSuccess: true,
@@ -3800,12 +5868,14 @@
                         permissions: savedMaster.permissions,
                         featureMemberCard: savedMaster.featureMemberCard,
                         featureHomepage: savedMaster.featureHomepage,
-                        featureBoard: savedMaster.featureBoard
+                        featureBoard: savedMaster.featureBoard,
+                        featureOvertime: savedMaster.featureOvertime,
+                        featureHolidayWork: savedMaster.featureHolidayWork
                     };
                 }
                 try {
                     const specialSummary = specialLeaveTypes.map((type) => `${type.typeKey}:${type.enabled ? 'on' : 'off'}`).join(',');
-                    await app.logUserAction('SettingSave', `memberCard:${memberCardEnabled}|homepage:${homepageEnabled}|board:${boardEnabled}|special:${specialSummary}`);
+                    await app.logUserAction('SettingSave', `memberCard:${memberCardEnabled}|homepage:${homepageEnabled}|board:${boardEnabled}|overtime:${overtimeEnabled}|holidayWork:${holidayWorkEnabled}|special:${specialSummary}`);
                 } catch (e) {
                     console.warn('설정 저장 로그 실패:', e);
                 }
@@ -3821,35 +5891,62 @@
         saveMasterPermissions: async () => {
             if (app.masterPermissionTab === 'settings') return app.saveMasterSettings();
             if (app.masterPermissionTab === 'mail') return app.saveMailSettings();
+            if (app.masterPermissionTab === 'ops') return;
             return app.saveMasterPermissionTable();
         },
         setMasterPermissionTab: (tab) => {
-            app.masterPermissionTab = ['permissions', 'settings', 'mail'].includes(tab) ? tab : 'permissions';
+            const safeTab = ['permissions', 'settings', 'mail', 'ops'].includes(tab) ? tab : 'permissions';
+            app.masterPermissionTab = safeTab;
+            if (safeTab === 'ops') {
+                app.loadAdminOpsPanelData().finally(() => app.renderMasterPermissionPage());
+                return;
+            }
             app.renderMasterPermissionPage();
         },
         setPermissionColumnOpen: (group) => {
-            const safeGroup = ['calendar', 'approve', 'memberStatus'].includes(group) ? group : 'calendar';
+            const safeGroup = ['calendar', 'approve', 'memberStatus', 'situation', 'detail'].includes(group) ? group : 'calendar';
             app.permissionColumnOpen = safeGroup;
             app.renderMasterPermissionPage();
         },
+        setPermissionDeptFilter: (filter) => {
+            const safeFilter = ['all', 'manual', 'parts'].includes(filter) ? filter : 'all';
+            app.permissionDeptFilter = safeFilter;
+            app.renderMasterPermissionPage();
+        },
         renderMasterPermissionPage: () => {
-            if (!app.hasMasterPermissionAccess()) {
+            if (!app.hasMasterPermissionAccess() && !app.hasAdminOpsAccess()) {
                 alert('권한/설정 권한이 없습니다.');
                 return app.refreshDashboard();
             }
             app.currentView = 'master-permissions';
             app.renderNav();
 
-            const activeTab = ['permissions', 'settings', 'mail'].includes(app.masterPermissionTab) ? app.masterPermissionTab : 'permissions';
+            const hasFullMasterAccess = app.hasMasterPermissionAccess();
+            let activeTab = ['permissions', 'settings', 'mail', 'ops'].includes(app.masterPermissionTab) ? app.masterPermissionTab : 'permissions';
+            if (!hasFullMasterAccess) activeTab = 'ops';
+            if (activeTab === 'ops' && !app.adminOpsLoaded) {
+                app.loadAdminOpsPanelData({ silent: true }).finally(() => app.renderMasterPermissionPage());
+                return;
+            }
             const memberCardEnabled = app.isMemberCardFeatureEnabled();
             const homepageEnabled = app.isHomepageFeatureEnabled();
             const boardEnabled = app.isBoardFeatureEnabled();
-            const openGroup = ['calendar', 'approve', 'memberStatus'].includes(app.permissionColumnOpen) ? app.permissionColumnOpen : 'calendar';
+            const overtimeEnabled = app.isOvertimeFeatureEnabled();
+            const holidayWorkEnabled = app.isHolidayWorkFeatureEnabled();
+            const openGroup = ['calendar', 'approve', 'memberStatus', 'situation', 'detail'].includes(app.permissionColumnOpen) ? app.permissionColumnOpen : 'calendar';
+            const deptFilter = ['all', 'manual', 'parts'].includes(app.permissionDeptFilter) ? app.permissionDeptFilter : 'all';
             const isCalendarOpen = openGroup === 'calendar';
             const isApproveOpen = openGroup === 'approve';
             const isMemberStatusOpen = openGroup === 'memberStatus';
+            const isSituationOpen = openGroup === 'situation';
+            const isDetailOpen = openGroup === 'detail';
             const users = [...appData.users].sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'ko'));
-            const rows = users.map(user => {
+            const filteredUsers = users.filter((user) => {
+                if (deptFilter === 'manual') return user.dept === '매뉴얼팀';
+                if (deptFilter === 'parts') return user.dept === '파츠북팀';
+                return true;
+            });
+            const rows = filteredUsers.map((user, rowIndex) => {
                 const safeId = security.cleanInlineValue(user.id);
                 const perms = security.sanitizePermissions(user.permissions || {}, user.role, user.dept);
                 const isMasterRow = user.role === 'master';
@@ -3859,7 +5956,16 @@
                 const rowToneClass = isCeoRow
                     ? 'bg-amber-100/70'
                     : (isManagerRow ? 'bg-blue-100/70' : (isPartLeaderRow ? 'bg-rose-100/70' : ''));
-                const rowClass = `border-b last:border-0 ${rowToneClass ? 'hover:brightness-95' : 'hover:bg-gray-50'}`;
+                const isOddRow = rowIndex % 2 === 1;
+                const infoStripeClass = isOddRow ? 'bg-slate-50/70' : 'bg-white';
+                const calStripeClass = isOddRow ? 'bg-indigo-100/55' : 'bg-indigo-50';
+                const approveStripeClass = isOddRow ? 'bg-emerald-100/55' : 'bg-emerald-50';
+                const memberStatusStripeClass = isOddRow ? 'bg-violet-100/55' : 'bg-violet-50';
+                const situationDesktopStripeClass = isOddRow ? 'bg-rose-100/55' : 'bg-rose-50';
+                const situationMobileStripeClass = isOddRow ? 'bg-orange-100/55' : 'bg-orange-50';
+                const detailDesktopStripeClass = isOddRow ? 'bg-fuchsia-100/55' : 'bg-fuchsia-50';
+                const detailMobileStripeClass = isOddRow ? 'bg-sky-100/55' : 'bg-sky-50';
+                const rowClass = `border-b last:border-0 ${rowToneClass ? 'hover:brightness-95' : 'hover:bg-slate-50/80'}`;
                 const nameBorderClass = isCeoRow
                     ? 'border-l-4 border-amber-400'
                     : (isManagerRow ? 'border-l-4 border-blue-500' : (isPartLeaderRow ? 'border-l-4 border-rose-500' : ''));
@@ -3868,23 +5974,47 @@
                     isManagerRow ? '<span class="ml-1 px-2 py-0.5 rounded-full text-[11px] bg-blue-100 text-blue-800 font-bold">팀리더</span>' : '',
                     isPartLeaderRow ? '<span class="ml-1 px-2 py-0.5 rounded-full text-[11px] bg-rose-100 text-rose-800 font-bold">파트리더</span>' : ''
                 ].join('');
-                const infoCellBgClass = rowToneClass || '';
-                const calCellBgClass = rowToneClass || 'bg-indigo-50';
-                const approveCellBgClass = rowToneClass || 'bg-emerald-50';
-                const memberStatusCellBgClass = rowToneClass || 'bg-violet-50';
-                const masterAccessCellBgClass = rowToneClass || 'bg-fuchsia-50';
-                const manageCellBgClass = rowToneClass || 'bg-amber-50';
-                const calendarCells = `<td class="p-3 align-middle text-center border-l-2 border-indigo-100 ${calCellBgClass}"><input class="w-4 h-4 align-middle accent-indigo-600 border-gray-300 rounded" type="checkbox" id="perm-cal-self-${safeId}" ${perms.calendarSelf ? 'checked' : ''} ${isMasterRow ? 'disabled' : ''}></td>
-                    <td class="p-3 align-middle text-center ${calCellBgClass}"><input class="w-4 h-4 align-middle accent-indigo-600 border-gray-300 rounded" type="checkbox" id="perm-cal-manual-${safeId}" ${perms.calendarManual ? 'checked' : ''} ${isMasterRow ? 'disabled' : ''}></td>
-                    <td class="p-3 align-middle text-center ${calCellBgClass}"><input class="w-4 h-4 align-middle accent-indigo-600 border-gray-300 rounded" type="checkbox" id="perm-cal-parts-${safeId}" ${perms.calendarParts ? 'checked' : ''} ${isMasterRow ? 'disabled' : ''}></td>
-                    <td class="p-3 align-middle text-center border-r-2 border-indigo-100 ${calCellBgClass}"><input class="w-4 h-4 align-middle accent-indigo-600 border-gray-300 rounded" type="checkbox" id="perm-cal-all-${safeId}" ${perms.calendarAll ? 'checked' : ''} ${isMasterRow ? 'disabled' : ''}></td>`;
+                const infoCellBgClass = rowToneClass || infoStripeClass;
+                const calCellBgClass = rowToneClass || calStripeClass;
+                const approveCellBgClass = rowToneClass || approveStripeClass;
+                const memberStatusCellBgClass = rowToneClass || memberStatusStripeClass;
+                const situationDesktopCellBgClass = rowToneClass || situationDesktopStripeClass;
+                const situationMobileCellBgClass = rowToneClass || situationMobileStripeClass;
+                const detailDesktopCellBgClass = rowToneClass || detailDesktopStripeClass;
+                const detailMobileCellBgClass = rowToneClass || detailMobileStripeClass;
+                const renderCalendarPermissionPair = (topId, topChecked, topLabel, bottomId, bottomChecked, bottomLabel, isFirst = false, isLast = false) => `
+                    <td class="p-2 align-middle ${isFirst ? 'border-l-2 border-indigo-100' : ''} ${isLast ? 'border-r-2 border-indigo-100' : ''} ${calCellBgClass}">
+                        <div class="grid grid-rows-2 gap-2 min-h-[86px]">
+                            <label class="flex items-center justify-center gap-2 rounded-lg border border-indigo-100 bg-white/70 px-2 py-2 text-xs font-bold text-gray-700">
+                                <input class="w-4 h-4 accent-indigo-600 border-gray-300 rounded" type="checkbox" id="${topId}" ${topChecked ? 'checked' : ''} ${isMasterRow ? 'disabled' : ''}>
+                                <span>${topLabel}</span>
+                            </label>
+                            <label class="flex items-center justify-center gap-2 rounded-lg border border-indigo-100 bg-white/70 px-2 py-2 text-xs font-bold text-gray-700">
+                                <input class="w-4 h-4 accent-indigo-600 border-gray-300 rounded" type="checkbox" id="${bottomId}" ${bottomChecked ? 'checked' : ''} ${isMasterRow ? 'disabled' : ''}>
+                                <span>${bottomLabel}</span>
+                            </label>
+                        </div>
+                    </td>`;
+                const calendarCells = [
+                    renderCalendarPermissionPair(`perm-cal-self-${safeId}`, perms.calendarSelf, '자기연차', `perm-cal-all-${safeId}`, perms.calendarAll, '모두', true, false),
+                    renderCalendarPermissionPair(`perm-cal-manual-${safeId}`, perms.calendarManual, '매뉴얼팀', `perm-cal-rejected-${safeId}`, perms.calendarRejected, '반려', false, false),
+                    renderCalendarPermissionPair(`perm-cal-parts-${safeId}`, perms.calendarParts, '파츠북팀', `perm-cal-workreport-${safeId}`, perms.calendarWorkReport, '잔업/특근', false, true)
+                ].join('');
                 const approveCells = `<td class="p-3 align-middle text-center border-l-2 border-emerald-100 ${approveCellBgClass}"><input class="w-4 h-4 align-middle accent-emerald-600 border-gray-300 rounded" type="checkbox" id="perm-approve-manual-${safeId}" ${perms.approveScope==='manual' ? 'checked' : ''} ${isMasterRow ? 'disabled' : ''} onchange="app.toggleApproveScopeCheckbox('${safeId}','manual',this.checked)"></td>
                     <td class="p-3 align-middle text-center ${approveCellBgClass}"><input class="w-4 h-4 align-middle accent-emerald-600 border-gray-300 rounded" type="checkbox" id="perm-approve-parts-${safeId}" ${perms.approveScope==='parts' ? 'checked' : ''} ${isMasterRow ? 'disabled' : ''} onchange="app.toggleApproveScopeCheckbox('${safeId}','parts',this.checked)"></td>
                     <td class="p-3 align-middle text-center border-r-2 border-emerald-100 ${approveCellBgClass}"><input class="w-4 h-4 align-middle accent-emerald-600 border-gray-300 rounded" type="checkbox" id="perm-approve-all-${safeId}" ${perms.approveScope==='all' ? 'checked' : ''} ${isMasterRow ? 'disabled' : ''} onchange="app.toggleApproveScopeCheckbox('${safeId}','all',this.checked)"></td>`;
                 const memberStatusCells = `<td class="p-3 align-middle text-center border-l-2 border-violet-100 ${memberStatusCellBgClass}"><input class="w-4 h-4 align-middle accent-violet-600 border-gray-300 rounded" type="checkbox" id="perm-member-status-manual-${safeId}" ${perms.memberStatusScope==='manual' ? 'checked' : ''} ${isMasterRow ? 'disabled' : ''} onchange="app.toggleMemberStatusScopeCheckbox('${safeId}','manual',this.checked)"></td>
                     <td class="p-3 align-middle text-center ${memberStatusCellBgClass}"><input class="w-4 h-4 align-middle accent-violet-600 border-gray-300 rounded" type="checkbox" id="perm-member-status-parts-${safeId}" ${perms.memberStatusScope==='parts' ? 'checked' : ''} ${isMasterRow ? 'disabled' : ''} onchange="app.toggleMemberStatusScopeCheckbox('${safeId}','parts',this.checked)"></td>
                     <td class="p-3 align-middle text-center border-r-2 border-violet-100 ${memberStatusCellBgClass}"><input class="w-4 h-4 align-middle accent-violet-600 border-gray-300 rounded" type="checkbox" id="perm-member-status-all-${safeId}" ${perms.memberStatusScope==='all' ? 'checked' : ''} ${isMasterRow ? 'disabled' : ''} onchange="app.toggleMemberStatusScopeCheckbox('${safeId}','all',this.checked)"></td>`;
-                const activeGroupCells = isCalendarOpen ? calendarCells : (isApproveOpen ? approveCells : memberStatusCells);
+                const situationCells = `<td class="px-2 py-3 align-middle text-center border-l-2 border-rose-100 ${situationDesktopCellBgClass}"><input class="w-4 h-4 align-middle accent-rose-600 border-gray-300 rounded" type="checkbox" id="perm-situation-desktop-${safeId}" ${perms.canAccessSituationBoardDesktop ? 'checked' : ''} ${isMasterRow ? 'disabled' : ''}></td>
+                    <td class="px-2 py-3 align-middle text-center border-r-4 border-rose-200 ${situationDesktopCellBgClass}"><input class="w-4 h-4 align-middle accent-orange-600 border-gray-300 rounded" type="checkbox" id="perm-situation-mobile-${safeId}" ${perms.canAccessSituationBoardMobile ? 'checked' : ''} ${isMasterRow ? 'disabled' : ''}></td>`;
+                const detailCells = `<td class="px-2 py-3 align-middle text-center border-l-2 border-fuchsia-100 ${detailDesktopCellBgClass}"><input class="w-4 h-4 align-middle accent-fuchsia-600 border-gray-300 rounded" type="checkbox" id="perm-master-access-desktop-${safeId}" ${perms.canAccessMasterSettingsDesktop ? 'checked' : ''} ${isMasterRow ? 'disabled' : ''}></td>
+                    <td class="px-2 py-3 align-middle text-center ${detailDesktopCellBgClass}"><input class="w-4 h-4 align-middle accent-amber-600 border-gray-300 rounded" type="checkbox" id="perm-manage-desktop-${safeId}" ${perms.canManageUsersDesktop ? 'checked' : ''} ${isMasterRow ? 'disabled' : ''}></td>
+                    <td class="px-2 py-3 align-middle text-center border-r-4 border-fuchsia-200 ${detailDesktopCellBgClass}"><input class="w-4 h-4 align-middle accent-emerald-600 border-gray-300 rounded" type="checkbox" id="perm-admin-ops-desktop-${safeId}" ${perms.canAccessAdminOpsDesktop ? 'checked' : ''} ${isMasterRow ? 'disabled' : ''}></td>
+                    <td class="px-2 py-3 align-middle text-center border-l-4 border-sky-200 ${detailMobileCellBgClass}"><input class="w-4 h-4 align-middle accent-fuchsia-600 border-gray-300 rounded" type="checkbox" id="perm-master-access-mobile-${safeId}" ${perms.canAccessMasterSettingsMobile ? 'checked' : ''} ${isMasterRow ? 'disabled' : ''}></td>
+                    <td class="px-2 py-3 align-middle text-center ${detailMobileCellBgClass}"><input class="w-4 h-4 align-middle accent-amber-600 border-gray-300 rounded" type="checkbox" id="perm-manage-mobile-${safeId}" ${perms.canManageUsersMobile ? 'checked' : ''} ${isMasterRow ? 'disabled' : ''}></td>
+                    <td class="px-2 py-3 align-middle text-center border-r-2 border-sky-100 ${detailMobileCellBgClass}"><input class="w-4 h-4 align-middle accent-emerald-600 border-gray-300 rounded" type="checkbox" id="perm-admin-ops-mobile-${safeId}" ${perms.canAccessAdminOpsMobile ? 'checked' : ''} ${isMasterRow ? 'disabled' : ''}></td>`;
+                const activeGroupCells = isCalendarOpen ? calendarCells : (isApproveOpen ? approveCells : (isMemberStatusOpen ? memberStatusCells : (isSituationOpen ? situationCells : detailCells)));
 
                 return `<tr class="${rowClass}">
                     <td class="p-3 align-middle font-bold ${nameBorderClass} ${infoCellBgClass}">${user.name}${isMasterRow ? ' (MASTER)' : ''}${roleBadges}</td>
@@ -3892,8 +6022,6 @@
                     <td class="p-3 align-middle text-sm text-gray-600 ${infoCellBgClass}">${user.rank || '-'}</td>
                     <td class="p-3 align-middle text-sm text-gray-600 ${infoCellBgClass}">${app.getRoleLabelKo(user)}</td>
                     ${activeGroupCells}
-                    <td class="p-3 align-middle text-center ${masterAccessCellBgClass}"><input class="w-4 h-4 align-middle accent-fuchsia-600 border-gray-300 rounded" type="checkbox" id="perm-master-access-${safeId}" ${perms.canAccessMasterSettings ? 'checked' : ''} ${isMasterRow ? 'disabled' : ''}></td>
-                    <td class="p-3 align-middle text-center ${manageCellBgClass}"><input class="w-4 h-4 align-middle accent-amber-600 border-gray-300 rounded" type="checkbox" id="perm-manage-${safeId}" ${perms.canManageUsers ? 'checked' : ''} ${isMasterRow ? 'disabled' : ''}></td>
                 </tr>`;
             }).join('');
 
@@ -3933,20 +6061,43 @@
                         <span class="ml-2 text-sm font-bold ${boardEnabled ? 'text-indigo-700' : 'text-gray-500'}">${boardEnabled ? '켜짐' : '꺼짐'}</span>
                     </label>
                 </div>
+                <div class="mt-3 pt-3 border-t border-gray-100 flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                        <p class="text-sm font-bold text-gray-700">잔업 신청 기능</p>
+                        <p class="text-xs text-gray-500">메인 화면에 잔업 보고 버튼을 표시하고 월별 잔업 현황판을 사용합니다.</p>
+                    </div>
+                    <label class="inline-flex items-center cursor-pointer">
+                        <input type="checkbox" id="global-overtime-toggle" class="sr-only peer" ${overtimeEnabled ? 'checked' : ''}>
+                        <div class="relative w-10 h-5 bg-gray-200 rounded-full peer peer-checked:bg-indigo-600 peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:w-4 after:h-4 after:bg-white after:border after:border-gray-300 after:rounded-full after:transition-all"></div>
+                        <span class="ml-2 text-sm font-bold ${overtimeEnabled ? 'text-indigo-700' : 'text-gray-500'}">${overtimeEnabled ? '켜짐' : '꺼짐'}</span>
+                    </label>
+                </div>
+                <div class="mt-3 pt-3 border-t border-gray-100 flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                        <p class="text-sm font-bold text-gray-700">특근 신청 기능</p>
+                        <p class="text-xs text-gray-500">메인 화면에 특근 보고 버튼을 표시하고 월별 특근 현황판을 사용합니다.</p>
+                    </div>
+                    <label class="inline-flex items-center cursor-pointer">
+                        <input type="checkbox" id="global-holiday-work-toggle" class="sr-only peer" ${holidayWorkEnabled ? 'checked' : ''}>
+                        <div class="relative w-10 h-5 bg-gray-200 rounded-full peer peer-checked:bg-indigo-600 peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:w-4 after:h-4 after:bg-white after:border after:border-gray-300 after:rounded-full after:transition-all"></div>
+                        <span class="ml-2 text-sm font-bold ${holidayWorkEnabled ? 'text-indigo-700' : 'text-gray-500'}">${holidayWorkEnabled ? '켜짐' : '꺼짐'}</span>
+                    </label>
+                </div>
                 <div class="mt-3 pt-3 border-t border-gray-100">
                     <div class="flex items-center justify-between gap-3 mb-3">
                         <div>
                             <p class="text-sm font-bold text-gray-700">특별휴가 종류</p>
                             <p class="text-xs text-gray-500">여기서 종류를 만들고 켜면 직원 수정창에서 체크박스로 부여할 수 있습니다.</p>
                         </div>
+                        <button type="button" onclick="app.toggleSpecialLeaveSettings()" class="px-3 py-1.5 rounded-lg border border-indigo-100 text-indigo-700 text-sm font-bold hover:bg-indigo-50">${app.specialLeaveSettingsOpen ? '닫기' : '펼치기'}</button>
                     </div>
-                    <div class="flex flex-col md:flex-row gap-2 mb-3">
+                    ${app.specialLeaveSettingsOpen ? `<div class="flex flex-col md:flex-row gap-2 mb-3">
                         <input id="special-leave-new-type-label" type="text" placeholder="예: 병가, 출산휴가, 경조휴가" class="flex-1 border bg-gray-50 p-2.5 rounded-lg">
 <button type="button" onclick="app.addSpecialLeaveTypeFromInput()" class="px-4 py-2.5 rounded-lg text-sm font-bold border border-indigo-200 text-indigo-600 hover:bg-indigo-50 shrink-0">추가</button>
                     </div>
                     <div id="special-leave-type-settings-list" class="space-y-3">
                         ${app.getSortedSpecialLeaveTypes({ enabledOnly: false }).map((type, index) => app.renderSpecialLeaveTypeSettingRow(type, index)).join('')}
-                    </div>
+                    </div>` : `<div class="rounded-xl border border-dashed border-gray-200 px-4 py-6 text-sm text-gray-400 text-center">특별휴가 종류가 접혀 있습니다. 필요할 때 펼쳐서 수정하세요.</div>`}
                 </div>
             </div>`;
             const mailPanel = `<div class="bg-white border border-gray-200 rounded-xl shadow-sm p-4 mb-4">
@@ -3957,44 +6108,123 @@
                 </div>
             </div>`;
 
-            const groupButtons = `<div class="px-4 pt-4 pb-2 bg-white">
+            const deptFilterButtons = `
                 <div class="inline-flex items-center p-1 rounded-xl bg-gray-100 border border-gray-200 shadow-inner">
-                    <button onclick="app.setPermissionColumnOpen('calendar')" class="px-4 py-2 rounded-lg text-sm font-bold transition ${isCalendarOpen ? 'bg-white text-indigo-700 shadow-sm border border-indigo-100' : 'text-gray-600 hover:text-indigo-700'}">달력정보</button>
-                    <button onclick="app.setPermissionColumnOpen('approve')" class="px-4 py-2 rounded-lg text-sm font-bold transition ${isApproveOpen ? 'bg-white text-emerald-700 shadow-sm border border-emerald-100' : 'text-gray-600 hover:text-emerald-700'}">승인권한</button>
-                    <button onclick="app.setPermissionColumnOpen('memberStatus')" class="px-4 py-2 rounded-lg text-sm font-bold transition ${isMemberStatusOpen ? 'bg-white text-violet-700 shadow-sm border border-violet-100' : 'text-gray-600 hover:text-violet-700'}">팀원 연차현황</button>
+                    <button onclick="app.setPermissionDeptFilter('all')" class="px-4 py-2 rounded-lg text-sm font-bold transition ${deptFilter === 'all' ? 'bg-white text-slate-800 shadow-sm border border-slate-200' : 'text-gray-600 hover:text-slate-800'}">전부</button>
+                    <button onclick="app.setPermissionDeptFilter('manual')" class="px-4 py-2 rounded-lg text-sm font-bold transition ${deptFilter === 'manual' ? 'bg-white text-indigo-700 shadow-sm border border-indigo-100' : 'text-gray-600 hover:text-indigo-700'}">매뉴얼팀</button>
+                    <button onclick="app.setPermissionDeptFilter('parts')" class="px-4 py-2 rounded-lg text-sm font-bold transition ${deptFilter === 'parts' ? 'bg-white text-sky-700 shadow-sm border border-sky-100' : 'text-gray-600 hover:text-sky-700'}">파츠북팀</button>
+                </div>`;
+            const groupButtons = `<div class="px-4 pt-4 pb-2 bg-white">
+                <div class="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                    <div class="inline-flex items-center p-1 rounded-xl bg-gray-100 border border-gray-200 shadow-inner">
+                        <button onclick="app.setPermissionColumnOpen('calendar')" class="px-4 py-2 rounded-lg text-sm font-bold transition ${isCalendarOpen ? 'bg-white text-indigo-700 shadow-sm border border-indigo-100' : 'text-gray-600 hover:text-indigo-700'}">달력정보</button>
+                        <button onclick="app.setPermissionColumnOpen('approve')" class="px-4 py-2 rounded-lg text-sm font-bold transition ${isApproveOpen ? 'bg-white text-emerald-700 shadow-sm border border-emerald-100' : 'text-gray-600 hover:text-emerald-700'}">승인권한</button>
+                        <button onclick="app.setPermissionColumnOpen('memberStatus')" class="px-4 py-2 rounded-lg text-sm font-bold transition ${isMemberStatusOpen ? 'bg-white text-violet-700 shadow-sm border border-violet-100' : 'text-gray-600 hover:text-violet-700'}">팀원 연차현황</button>
+                        <button onclick="app.setPermissionColumnOpen('situation')" class="px-4 py-2 rounded-lg text-sm font-bold transition ${isSituationOpen ? 'bg-white text-rose-700 shadow-sm border border-rose-100' : 'text-gray-600 hover:text-rose-700'}">전체 상황판</button>
+                        <button onclick="app.setPermissionColumnOpen('detail')" class="px-4 py-2 rounded-lg text-sm font-bold transition ${isDetailOpen ? 'bg-white text-fuchsia-700 shadow-sm border border-fuchsia-100' : 'text-gray-600 hover:text-fuchsia-700'}">세부설정</button>
+                    </div>
+                    ${deptFilterButtons}
                 </div>
             </div>`;
-            const activeGroupTitle = isCalendarOpen ? '달력정보' : (isApproveOpen ? '승인권한' : '팀원 연차현황');
+            const activeGroupTitle = isCalendarOpen ? '달력정보' : (isApproveOpen ? '승인권한' : (isMemberStatusOpen ? '팀원 연차현황' : (isSituationOpen ? '전체 상황판' : '세부설정')));
             const activeGroupHeaderClass = isCalendarOpen
                 ? 'bg-indigo-50 text-indigo-700 border-l border-indigo-100 border-r'
-                : (isApproveOpen ? 'bg-emerald-50 text-emerald-700 border-l border-emerald-100 border-r' : 'bg-violet-50 text-violet-700 border-l border-violet-100 border-r');
+                : (isApproveOpen ? 'bg-emerald-50 text-emerald-700 border-l border-emerald-100 border-r' : (isMemberStatusOpen ? 'bg-violet-50 text-violet-700 border-l border-violet-100 border-r' : (isSituationOpen ? 'bg-rose-50 text-rose-700 border-l border-rose-100 border-r' : 'bg-fuchsia-50 text-fuchsia-700 border-l border-fuchsia-100 border-r')));
             const activeGroupSubHeader = isCalendarOpen
-                ? `<th class="p-3 bg-indigo-50 border-b border-gray-200 text-center border-l border-indigo-100">자기연차</th>
-                    <th class="p-3 bg-indigo-50 border-b border-gray-200 text-center">매뉴얼팀</th>
-                    <th class="p-3 bg-indigo-50 border-b border-gray-200 text-center">파츠북팀</th>
-                    <th class="p-3 bg-indigo-50 border-b border-gray-200 text-center border-r border-indigo-100">모두</th>`
+                ? `<th class="py-1 bg-indigo-50 border-b border-gray-200 border-l border-indigo-100"></th>
+                    <th class="py-1 bg-indigo-50 border-b border-gray-200"></th>
+                    <th class="py-1 bg-indigo-50 border-b border-gray-200 border-r border-indigo-100"></th>`
                 : (isApproveOpen
                     ? `<th class="p-3 bg-emerald-50 border-b border-gray-200 text-center border-l border-emerald-100">매뉴얼</th>
                         <th class="p-3 bg-emerald-50 border-b border-gray-200 text-center">파츠북</th>
                         <th class="p-3 bg-emerald-50 border-b border-gray-200 text-center border-r border-emerald-100">모두</th>`
-                    : `<th class="p-3 bg-violet-50 border-b border-gray-200 text-center border-l border-violet-100">매뉴얼</th>
-                        <th class="p-3 bg-violet-50 border-b border-gray-200 text-center">파츠북</th>
-                        <th class="p-3 bg-violet-50 border-b border-gray-200 text-center border-r border-violet-100">모두</th>`);
-            const activeGroupColSpan = isCalendarOpen ? 4 : 3;
+                    : (isMemberStatusOpen
+                        ? `<th class="p-3 bg-violet-50 border-b border-gray-200 text-center border-l border-violet-100">매뉴얼</th>
+                            <th class="p-3 bg-violet-50 border-b border-gray-200 text-center">파츠북</th>
+                            <th class="p-3 bg-violet-50 border-b border-gray-200 text-center border-r border-violet-100">모두</th>`
+                        : (isSituationOpen
+                            ? `<th class="px-2 py-2.5 bg-rose-50 border-b border-gray-200 text-center border-l border-rose-100">
+                                    <div class="flex flex-col items-center gap-0.5 leading-tight">
+                                        <span class="px-1.5 py-0.5 rounded-full text-[9px] font-bold bg-rose-100 text-rose-700">PC</span>
+                                        <span class="text-[12px]">전체 상황판</span>
+                                    </div>
+                                </th>
+                                <th class="px-2 py-2.5 bg-orange-50 border-b border-gray-200 text-center border-r border-rose-100">
+                                    <div class="flex flex-col items-center gap-0.5 leading-tight">
+                                        <span class="px-1.5 py-0.5 rounded-full text-[9px] font-bold bg-orange-100 text-orange-700">모바일</span>
+                                        <span class="text-[12px]">전체 상황판</span>
+                                    </div>
+                                </th>`
+                        : `<th class="px-2 py-2.5 bg-fuchsia-50 border-b border-gray-200 text-center border-l border-fuchsia-100">
+                                <div class="flex flex-col items-center gap-0.5 leading-tight">
+                                    <span class="px-1.5 py-0.5 rounded-full text-[9px] font-bold bg-fuchsia-100 text-fuchsia-700">PC</span>
+                                    <span class="text-[12px]">권한/설정<br>접근</span>
+                                </div>
+                            </th>
+                            <th class="px-2 py-2.5 bg-amber-50 border-b border-gray-200 text-center">
+                                <div class="flex flex-col items-center gap-0.5 leading-tight">
+                                    <span class="px-1.5 py-0.5 rounded-full text-[9px] font-bold bg-fuchsia-100 text-fuchsia-700">PC</span>
+                                    <span class="text-[12px]">구성원 관리</span>
+                                </div>
+                            </th>
+                            <th class="px-2 py-2.5 bg-emerald-50 border-b border-r-4 border-fuchsia-200 border-gray-200 text-center">
+                                <div class="flex flex-col items-center gap-0.5 leading-tight">
+                                    <span class="px-1.5 py-0.5 rounded-full text-[9px] font-bold bg-fuchsia-100 text-fuchsia-700">PC</span>
+                                    <span class="text-[12px]">운영실 접근</span>
+                                </div>
+                            </th>
+                            <th class="px-2 py-2.5 bg-sky-50 border-b border-l-4 border-sky-200 border-gray-200 text-center">
+                                <div class="flex flex-col items-center gap-0.5 leading-tight">
+                                    <span class="px-1.5 py-0.5 rounded-full text-[9px] font-bold bg-sky-100 text-sky-700">모바일</span>
+                                    <span class="text-[12px]">권한/설정<br>접근</span>
+                                </div>
+                            </th>
+                            <th class="px-2 py-2.5 bg-cyan-50 border-b border-gray-200 text-center">
+                                <div class="flex flex-col items-center gap-0.5 leading-tight">
+                                    <span class="px-1.5 py-0.5 rounded-full text-[9px] font-bold bg-sky-100 text-sky-700">모바일</span>
+                                    <span class="text-[12px]">구성원 관리</span>
+                                </div>
+                            </th>
+                            <th class="px-2 py-2.5 bg-teal-50 border-b border-gray-200 text-center border-r border-sky-100">
+                                <div class="flex flex-col items-center gap-0.5 leading-tight">
+                                    <span class="px-1.5 py-0.5 rounded-full text-[9px] font-bold bg-sky-100 text-sky-700">모바일</span>
+                                    <span class="text-[12px]">운영실 접근</span>
+                                </div>
+                            </th>`)));
+            const activeGroupColSpan = isCalendarOpen ? 3 : (isDetailOpen ? 6 : (isSituationOpen ? 2 : 3));
             const permissionColGroup = isCalendarOpen
                 ? `<colgroup>
                     <col style="width: 190px;">
                     <col style="width: 120px;">
                     <col style="width: 100px;">
                     <col style="width: 100px;">
-                    <col style="width: 88px;">
-                    <col style="width: 88px;">
-                    <col style="width: 88px;">
-                    <col style="width: 88px;">
-                    <col style="width: 120px;">
-                    <col style="width: 120px;">
+                    <col style="width: 156px;">
+                    <col style="width: 156px;">
+                    <col style="width: 156px;">
                 </colgroup>`
-                : `<colgroup>
+                : (isDetailOpen
+                    ? `<colgroup>
+                        <col style="width: 190px;">
+                        <col style="width: 112px;">
+                        <col style="width: 88px;">
+                        <col style="width: 88px;">
+                        <col style="width: 108px;">
+                        <col style="width: 96px;">
+                        <col style="width: 100px;">
+                        <col style="width: 108px;">
+                        <col style="width: 96px;">
+                        <col style="width: 100px;">
+                    </colgroup>`
+                    : (isSituationOpen
+                        ? `<colgroup>
+                            <col style="width: 190px;">
+                            <col style="width: 120px;">
+                            <col style="width: 100px;">
+                            <col style="width: 100px;">
+                            <col style="width: 118px;">
+                            <col style="width: 118px;">
+                        </colgroup>`
+                    : `<colgroup>
                     <col style="width: 190px;">
                     <col style="width: 120px;">
                     <col style="width: 100px;">
@@ -4002,15 +6232,14 @@
                     <col style="width: 96px;">
                     <col style="width: 96px;">
                     <col style="width: 96px;">
-                    <col style="width: 120px;">
-                    <col style="width: 120px;">
-                </colgroup>`;
+                </colgroup>`));
             const permissionPanel = `<div class="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden">
                 <div class="p-4 border-b border-gray-200">
                     <p class="text-sm font-bold text-gray-700">권한 탭</p>
                     <p class="text-sm text-gray-600">직원별로 체크박스를 선택하세요.</p>
                     <p class="text-sm text-gray-600">승인 권한은 매뉴얼팀/파츠북팀/모두 중 하나만 체크하세요.</p>
                     <p class="text-sm text-gray-600">팀원 연차현황 권한도 매뉴얼팀/파츠북팀/모두 중 하나만 체크하세요.</p>
+                    <p class="text-sm text-gray-600">세부설정에서는 PC와 모바일 권한을 각각 분리해 관리합니다.</p>
                     <p class="text-sm text-gray-600">한 번에 1개 그룹만 펼쳐집니다. 다른 그룹은 자동으로 닫힙니다.</p>
                     <div class="mt-2 text-xs text-gray-500 flex flex-wrap gap-2 items-center">
                         <span class="inline-flex items-center px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 font-bold">팀리더 행 강조</span>
@@ -4020,7 +6249,7 @@
                 </div>
                 <div class="overflow-x-auto">
                     ${groupButtons}
-                    <table id="master-perm-table" class="w-full text-sm table-fixed ${isCalendarOpen ? 'min-w-[1220px]' : 'min-w-[1140px]'}">
+                    <table id="master-perm-table" class="w-full text-sm table-fixed ${isCalendarOpen ? 'min-w-[980px]' : (isDetailOpen ? 'min-w-[1190px]' : (isSituationOpen ? 'min-w-[930px]' : 'min-w-[1140px]'))}">
                         ${permissionColGroup}
                         <thead class="bg-gray-50">
                             <tr>
@@ -4029,14 +6258,12 @@
                                 <th rowspan="2" class="p-3 text-left bg-gray-50 border-b border-gray-200">직급</th>
                                 <th rowspan="2" class="p-3 text-left bg-gray-50 border-b border-gray-200">유형</th>
                                 <th colspan="${activeGroupColSpan}" class="p-3 text-center border-b border-gray-200 ${activeGroupHeaderClass}">${activeGroupTitle}</th>
-                                <th rowspan="2" class="p-3 text-center bg-fuchsia-50 border-b border-gray-200">권한/설정 접근</th>
-                                <th rowspan="2" class="p-3 text-center bg-amber-50 border-b border-gray-200">구성원 관리</th>
                             </tr>
                             <tr>
                                 ${activeGroupSubHeader}
                             </tr>
                         </thead>
-                        <tbody>${rows}</tbody>
+                        <tbody>${rows || `<tr><td colspan="${4 + activeGroupColSpan}" class="p-6 text-center text-sm text-gray-400 bg-white">선택한 팀에 해당하는 직원이 없습니다.</td></tr>`}</tbody>
                     </table>
                 </div>
             </div>`;
@@ -4044,19 +6271,26 @@
                 ? `<button onclick="app.saveMasterPermissionTable()" class="bg-indigo-600 text-white px-5 py-2.5 rounded-lg font-bold hover:bg-indigo-700">권한 저장</button>`
                 : (activeTab === 'settings'
                     ? `<button onclick="app.saveMasterSettings()" class="bg-indigo-600 text-white px-5 py-2.5 rounded-lg font-bold hover:bg-indigo-700">설정 저장</button>`
-                    : `<button onclick="app.saveMailSettings()" class="bg-indigo-600 text-white px-5 py-2.5 rounded-lg font-bold hover:bg-indigo-700">메일 설정 저장</button>`);
+                    : (activeTab === 'mail'
+                        ? `<button onclick="app.saveMailSettings()" class="bg-indigo-600 text-white px-5 py-2.5 rounded-lg font-bold hover:bg-indigo-700">메일 설정 저장</button>`
+                        : ''));
             const topTabs = `<div class="px-4 pt-3 bg-gray-100/80 border-b border-gray-200">
                 <div class="flex items-end gap-1">
-                    <button onclick="app.setMasterPermissionTab('permissions')" class="px-4 py-2 rounded-t-xl font-bold border transition ${activeTab === 'permissions' ? 'bg-white text-gray-900 border-gray-300 border-b-white -mb-px shadow-sm' : 'bg-gray-200 text-gray-600 border-transparent hover:bg-gray-100'}">권한 탭</button>
+                    ${hasFullMasterAccess ? `<button onclick="app.setMasterPermissionTab('permissions')" class="px-4 py-2 rounded-t-xl font-bold border transition ${activeTab === 'permissions' ? 'bg-white text-gray-900 border-gray-300 border-b-white -mb-px shadow-sm' : 'bg-gray-200 text-gray-600 border-transparent hover:bg-gray-100'}">권한 탭</button>
                     <button onclick="app.setMasterPermissionTab('settings')" class="px-4 py-2 rounded-t-xl font-bold border transition ${activeTab === 'settings' ? 'bg-white text-gray-900 border-gray-300 border-b-white -mb-px shadow-sm' : 'bg-gray-200 text-gray-600 border-transparent hover:bg-gray-100'}">설정 테이블</button>
-                    <button onclick="app.setMasterPermissionTab('mail')" class="px-4 py-2 rounded-t-xl font-bold border transition ${activeTab === 'mail' ? 'bg-white text-gray-900 border-gray-300 border-b-white -mb-px shadow-sm' : 'bg-gray-200 text-gray-600 border-transparent hover:bg-gray-100'}">메일 설정</button>
+                    <button onclick="app.setMasterPermissionTab('mail')" class="px-4 py-2 rounded-t-xl font-bold border transition ${activeTab === 'mail' ? 'bg-white text-gray-900 border-gray-300 border-b-white -mb-px shadow-sm' : 'bg-gray-200 text-gray-600 border-transparent hover:bg-gray-100'}">메일 설정</button>` : ''}
+                    <button onclick="app.setMasterPermissionTab('ops')" class="px-4 py-2 rounded-t-xl font-bold border transition ${activeTab === 'ops' ? 'bg-white text-gray-900 border-gray-300 border-b-white -mb-px shadow-sm' : 'bg-gray-200 text-gray-600 border-transparent hover:bg-gray-100'}">운영실</button>
                 </div>
             </div>`;
-            const activePanel = activeTab === 'permissions' ? permissionPanel : (activeTab === 'settings' ? settingsPanel : mailPanel);
+            const activePanel = activeTab === 'permissions'
+                ? permissionPanel
+                : (activeTab === 'settings'
+                    ? settingsPanel
+                    : (activeTab === 'mail' ? mailPanel : app.renderAdminOpsPanel()));
 
             document.getElementById('app-container').innerHTML = `<div class="w-full max-w-7xl mx-auto px-4 pt-8 pb-12 fade-in">
                 <div class="mb-6">
-                    <h2 class="text-2xl font-bold text-gray-800">마스터 권한 관리</h2>
+                    <h2 class="text-2xl font-bold text-gray-800">${activeTab === 'ops' && !hasFullMasterAccess ? '관리자 운영실' : '마스터 권한 관리'}</h2>
                 </div>
                 <div class="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden">
                     ${topTabs}
@@ -4149,7 +6383,180 @@
         getModal: () => {
             const timeOpts = makeTimeOptions();
             const outDurationOpts = makeDurationOptions(10);
-            return `<div id="req-modal" class="fixed inset-0 bg-black/60 backdrop-blur-sm hidden flex justify-center items-center z-50 fade-in"><div class="bg-white rounded-2xl p-6 w-full max-w-sm shadow-2xl transform scale-100"><div class="flex justify-between items-center mb-6 border-b pb-2"><h3 class="font-bold text-xl text-gray-800" id="req-modal-title">연차 신청</h3><div class="flex items-center"><label class="inline-flex items-center cursor-pointer"><input type="checkbox" id="allow-past" class="sr-only peer" onchange="app.togglePastDates()"><div class="relative w-9 h-5 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-indigo-600"></div><span class="ms-2 text-xs font-medium text-gray-500">지난 날짜 선택</span></label></div></div><div class="space-y-4 mb-6"><div><label class="block text-xs font-bold text-gray-500 mb-1">종류</label><select id="req-type" class="w-full bg-gray-50 border p-2.5 rounded-lg" onchange="toggleInputs()">${app.getRequestTypeOptionsHtml('연차')}</select></div><div id="div-special-mode" class="hidden"><label class="block text-xs font-bold text-gray-500 mb-1">사용 방식</label><select id="req-special-mode" class="w-full bg-gray-50 border p-2.5 rounded-lg" onchange="toggleInputs()">${app.getSpecialModeOptionsHtml('연차')}</select></div><div id="div-date-range"><div class="flex justify-between items-center mb-1"><label class="block text-xs font-bold text-gray-500">날짜</label><label class="inline-flex items-center cursor-pointer"><span class="mr-2 text-xs text-gray-500">기간 설정</span><input type="checkbox" id="is-multi-day" class="sr-only peer" onchange="toggleInputs()"><div class="relative w-9 h-5 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-indigo-600"></div></label></div><div class="flex gap-2"><input type="date" id="req-start-date" onchange="app.checkHoliday(this)" class="w-full bg-gray-50 border p-2.5 rounded-lg"><input type="date" id="req-end-date" onchange="app.checkHoliday(this)" class="w-full bg-gray-50 border p-2.5 rounded-lg"></div><p id="date-status" class="text-[10px] font-bold mt-1 min-h-[15px]"></p></div><div id="div-timeoff" class="hidden bg-indigo-50 p-3 rounded-lg border border-indigo-100"><div class="flex gap-2 mb-2"><div class="w-1/2"><label class="text-xs font-bold text-indigo-700">사용 시간</label><select id="req-duration-timeoff" class="w-full border p-1 rounded mt-1"><option value="1">1시간</option><option value="2">2시간</option><option value="3">3시간</option><option value="4">4시간</option><option value="5">5시간</option><option value="6">6시간</option><option value="7">7시간</option></select></div><div class="w-1/2"><label class="text-xs font-bold text-indigo-700">퇴근 시간</label><select id="req-end-time-timeoff" class="w-full border p-1 rounded mt-1 bg-gray-100 text-gray-500" disabled><option value="18">18:00</option><option value="17">17:00</option><option value="16">16:00</option></select></div></div><p class="text-[10px] text-indigo-600">* 직원 근무시간 기준 퇴근 시간이 자동 적용됩니다.</p></div><div id="div-out" class="hidden bg-emerald-50 p-3 rounded-lg border border-emerald-100"><div class="flex gap-2 mb-2"><div class="w-1/2"><label class="text-xs font-bold text-emerald-700">사용 시간</label><select id="req-duration-out" class="w-full border p-1 rounded mt-1" onchange="updateOutPreview()">${outDurationOpts}</select></div><div class="w-1/2"><label class="text-xs font-bold text-emerald-700">시작 시간</label><select id="req-start-time-out" class="w-full border p-1 rounded mt-1" onchange="updateOutPreview()">${timeOpts}</select></div></div><p id="req-out-preview" class="text-[10px] text-emerald-700 min-h-[15px]"></p><p class="text-[10px] text-emerald-600">* 시작 시간을 기준으로 자동 종료 계산</p></div><div><label class="block text-xs font-bold text-gray-500 mb-1">사유</label><select id="req-reason" class="w-full bg-gray-50 border p-2.5 rounded-lg"><option value="Refresh">Refresh</option><option value="병원(본인)">병원(본인)</option><option value="병원(가족)">병원(가족)</option><option value="가사">가사</option><option value="은행">은행</option><option value="여행">여행</option><option value="건강검진(유급)">건강검진(유급)</option><option value="건강검진(무급)">건강검진(무급)</option></select></div></div><div class="flex justify-end gap-2"><button onclick="document.getElementById('req-modal').classList.add('hidden')" class="bg-gray-100 px-5 py-2.5 rounded-lg font-bold">취소</button><button onclick="app.submitRequest()" id="req-modal-btn" class="bg-indigo-600 text-white px-5 py-2.5 rounded-lg font-bold shadow-lg">신청하기</button></div></div></div><div id="pw-modal" class="fixed inset-0 bg-black/60 backdrop-blur-sm hidden flex justify-center items-center z-50 fade-in"><div class="bg-white rounded-2xl p-6 w-full max-w-sm shadow-2xl"><h3 class="font-bold text-xl mb-6 border-b pb-2">비밀번호 변경</h3>
+            const reportDurationOpts = makeDurationOptions(10);
+            let reportStartOpts = '';
+            for (let i = 7; i <= 22; i++) {
+                const val = String(i).padStart(2, '0');
+                reportStartOpts += `<option value="${i}">${val}:00</option>`;
+            }
+            return `<div id="req-modal" class="fixed inset-0 bg-black/60 backdrop-blur-sm hidden flex justify-center items-center z-50 fade-in">
+                <div class="bg-white rounded-2xl p-6 w-full max-w-sm shadow-2xl transform scale-100">
+                    <div class="flex justify-between items-center mb-6 border-b pb-2">
+                        <h3 class="font-bold text-xl text-gray-800" id="req-modal-title">연차 신청</h3>
+                        <div class="flex items-center">
+                            <label class="inline-flex items-center cursor-pointer">
+                                <input type="checkbox" id="allow-past" class="sr-only peer" onchange="app.togglePastDates()">
+                                <div class="relative w-9 h-5 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-indigo-600"></div>
+                                <span class="ms-2 text-xs font-medium text-gray-500">지난 날짜 선택</span>
+                            </label>
+                        </div>
+                    </div>
+                    <div class="space-y-4 mb-6">
+                        <div id="div-proxy-user" class="hidden">
+                            <label class="block text-xs font-bold text-gray-500 mb-1">대상 직원</label>
+                            <select id="req-target-user" class="w-full bg-gray-50 border p-2.5 rounded-lg" onchange="app.handleRequestTargetUserChange(this.value)"></select>
+                            <p class="text-[10px] text-gray-500 mt-1">관리자 대리 등록/수정 모드입니다.</p>
+                        </div>
+                        <div>
+                            <label class="block text-xs font-bold text-gray-500 mb-1">종류</label>
+                            <select id="req-type" class="w-full bg-gray-50 border p-2.5 rounded-lg" onchange="toggleInputs()">${app.getRequestTypeOptionsHtml('연차')}</select>
+                        </div>
+                        <div id="div-special-mode" class="hidden">
+                            <label class="block text-xs font-bold text-gray-500 mb-1">사용 방식</label>
+                            <select id="req-special-mode" class="w-full bg-gray-50 border p-2.5 rounded-lg" onchange="toggleInputs()">${app.getSpecialModeOptionsHtml('연차')}</select>
+                        </div>
+                        <div id="div-date-range">
+                            <div class="flex justify-between items-center mb-1">
+                                <label class="block text-xs font-bold text-gray-500">날짜</label>
+                                <label class="inline-flex items-center cursor-pointer">
+                                    <span class="mr-2 text-xs text-gray-500">기간 설정</span>
+                                    <input type="checkbox" id="is-multi-day" class="sr-only peer" onchange="toggleInputs()">
+                                    <div class="relative w-9 h-5 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-indigo-600"></div>
+                                </label>
+                            </div>
+                            <div class="flex gap-2">
+                                <input type="date" id="req-start-date" onchange="app.checkHoliday(this)" class="w-full bg-gray-50 border p-2.5 rounded-lg">
+                                <input type="date" id="req-end-date" onchange="app.checkHoliday(this)" class="w-full bg-gray-50 border p-2.5 rounded-lg">
+                            </div>
+                            <p id="date-status" class="text-[10px] font-bold mt-1 min-h-[15px]"></p>
+                        </div>
+                        <div id="div-timeoff" class="hidden bg-indigo-50 p-3 rounded-lg border border-indigo-100">
+                            <div class="flex gap-2 mb-2">
+                                <div class="w-1/2">
+                                    <label class="text-xs font-bold text-indigo-700">사용 시간</label>
+                                    <select id="req-duration-timeoff" class="w-full border p-1 rounded mt-1"><option value="1">1시간</option><option value="2">2시간</option><option value="3">3시간</option><option value="4">4시간</option><option value="5">5시간</option><option value="6">6시간</option><option value="7">7시간</option></select>
+                                </div>
+                                <div class="w-1/2">
+                                    <label class="text-xs font-bold text-indigo-700">퇴근 시간</label>
+                                    <select id="req-end-time-timeoff" class="w-full border p-1 rounded mt-1 bg-gray-100 text-gray-500" disabled><option value="18">18:00</option><option value="17">17:00</option><option value="16">16:00</option></select>
+                                </div>
+                            </div>
+                            <p class="text-[10px] text-indigo-600">* 대상 직원의 현재 근무시간 기준 퇴근 시간이 자동 적용됩니다.</p>
+                        </div>
+                        <div id="div-out" class="hidden bg-emerald-50 p-3 rounded-lg border border-emerald-100">
+                            <div class="flex gap-2 mb-2">
+                                <div class="w-1/2">
+                                    <label class="text-xs font-bold text-emerald-700">사용 시간</label>
+                                    <select id="req-duration-out" class="w-full border p-1 rounded mt-1" onchange="updateOutPreview()">${outDurationOpts}</select>
+                                </div>
+                                <div class="w-1/2">
+                                    <label class="text-xs font-bold text-emerald-700">시작 시간</label>
+                                    <select id="req-start-time-out" class="w-full border p-1 rounded mt-1" onchange="updateOutPreview()">${timeOpts}</select>
+                                </div>
+                            </div>
+                            <p id="req-out-preview" class="text-[10px] text-emerald-700 min-h-[15px]"></p>
+                            <p class="text-[10px] text-emerald-600">* 시작 시간을 기준으로 자동 종료 계산</p>
+                        </div>
+                        <div id="div-report" class="hidden bg-slate-50 p-3 rounded-lg border border-slate-200 space-y-3">
+                            <div class="grid grid-cols-2 gap-2">
+                                <div>
+                                    <label class="text-xs font-bold text-slate-700">시작 시간</label>
+                                    <select id="req-report-start-time" class="w-full border p-2 rounded mt-1" onchange="app.updateReportPreview()">${reportStartOpts}</select>
+                                </div>
+                                <div>
+                                    <label class="text-xs font-bold text-slate-700">보고 시간</label>
+                                    <select id="req-report-duration" class="w-full border p-2 rounded mt-1" onchange="app.updateReportPreview()">${reportDurationOpts}</select>
+                                </div>
+                            </div>
+                            <p id="req-report-preview" class="text-[11px] text-slate-600 min-h-[18px]"></p>
+                            <div>
+                                <label class="block text-xs font-bold text-gray-500 mb-1">사유</label>
+                                <input type="text" id="req-report-reason" class="w-full bg-white border p-2.5 rounded-lg" placeholder="예: 긴급 일정 대응, 자료 보완">
+                            </div>
+                            <div>
+                                <label class="block text-xs font-bold text-gray-500 mb-1">업무내용</label>
+                                <textarea id="req-report-work-detail" class="w-full bg-white border p-2.5 rounded-lg min-h-[90px]" placeholder="실제 수행한 작업 내용을 입력하세요."></textarea>
+                            </div>
+                            <div>
+                                <label class="block text-xs font-bold text-gray-500 mb-1">요청 부서</label>
+                                <input type="text" id="req-report-dept" class="w-full bg-white border p-2.5 rounded-lg" placeholder="예: 연구기획">
+                            </div>
+                            <div>
+                                <label class="block text-xs font-bold text-gray-500 mb-1">비고</label>
+                                <textarea id="req-report-note" class="w-full bg-white border p-2.5 rounded-lg min-h-[72px]" placeholder="상세 사유, 참고사항 등을 입력하세요."></textarea>
+                            </div>
+                        </div>
+                        <div id="div-reason-select">
+                            <label class="block text-xs font-bold text-gray-500 mb-1">사유</label>
+                            <select id="req-reason" class="w-full bg-gray-50 border p-2.5 rounded-lg"><option value="Refresh">Refresh</option><option value="병원(본인)">병원(본인)</option><option value="병원(가족)">병원(가족)</option><option value="가사">가사</option><option value="은행">은행</option><option value="여행">여행</option><option value="건강검진(유급)">건강검진(유급)</option><option value="건강검진(무급)">건강검진(무급)</option></select>
+                        </div>
+                    </div>
+                    <div class="flex justify-end gap-2">
+                        <button onclick="document.getElementById('req-modal').classList.add('hidden')" class="bg-gray-100 px-5 py-2.5 rounded-lg font-bold">취소</button>
+                        <button onclick="app.submitRequest()" id="req-modal-btn" class="bg-indigo-600 text-white px-5 py-2.5 rounded-lg font-bold shadow-lg">신청하기</button>
+                    </div>
+                </div>
+            </div>
+            <div id="work-report-modal" class="fixed inset-0 bg-black/60 backdrop-blur-sm hidden flex justify-center items-center z-50 fade-in" onclick="if(event.target===this) app.closeWorkReportModal()">
+                <div class="bg-white rounded-2xl p-6 w-full max-w-sm shadow-2xl transform scale-100">
+                    <div class="flex justify-between items-center mb-6 border-b pb-2">
+                        <h3 class="font-bold text-xl text-gray-800">잔업/특근 신청</h3>
+                        <div class="flex items-center">
+                            <label class="inline-flex items-center cursor-pointer">
+                                <input type="checkbox" id="work-report-allow-past" class="sr-only peer" onchange="app.toggleWorkReportPastDates()">
+                                <div class="relative w-9 h-5 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-indigo-600"></div>
+                                <span class="ms-2 text-xs font-medium text-gray-500">지난 날짜 선택</span>
+                            </label>
+                        </div>
+                    </div>
+                    <div class="space-y-4 mb-6">
+                        <div>
+                            <label class="block text-xs font-bold text-gray-500 mb-1">구분</label>
+                            <select id="work-report-type" class="w-full bg-gray-50 border p-2.5 rounded-lg" onchange="app.syncWorkReportTypeDefaults()"></select>
+                        </div>
+                        <div>
+                            <label class="block text-xs font-bold text-gray-500 mb-1">날짜</label>
+                            <input type="date" id="work-report-date" onchange="app.syncWorkReportTypeDefaults()" class="w-full bg-gray-50 border p-2.5 rounded-lg">
+                            <p id="work-report-date-status" class="text-[10px] font-bold mt-1 min-h-[15px]"></p>
+                        </div>
+                        <div class="bg-slate-50 p-3 rounded-lg border border-slate-200">
+                            <div class="grid grid-cols-2 gap-2 mb-2">
+                                <div>
+                                    <label class="text-xs font-bold text-slate-700">시작 시간</label>
+                                    <select id="work-report-start-time" class="w-full border p-2 rounded mt-1" onchange="app.updateWorkReportPreview()">${reportStartOpts}</select>
+                                </div>
+                                <div>
+                                    <label class="text-xs font-bold text-slate-700">보고 시간</label>
+                                    <select id="work-report-duration" class="w-full border p-2 rounded mt-1" onchange="app.updateWorkReportPreview()">${reportDurationOpts}</select>
+                                </div>
+                            </div>
+                            <p id="work-report-preview" class="text-[11px] text-slate-600 min-h-[18px]"></p>
+                            <p class="text-[10px] text-slate-500">잔업/특근은 보고용이며 승인 절차 없이 저장됩니다.</p>
+                        </div>
+                        <div>
+                            <label class="block text-xs font-bold text-gray-500 mb-1">사유</label>
+                            <input type="text" id="work-report-reason" class="w-full bg-gray-50 border p-2.5 rounded-lg" placeholder="예: 긴급 일정 대응, 자료 보완">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-bold text-gray-500 mb-1">업무내용</label>
+                            <textarea id="work-report-work-detail" class="w-full bg-gray-50 border p-2.5 rounded-lg min-h-[90px]" placeholder="실제 수행한 작업 내용을 입력하세요."></textarea>
+                        </div>
+                        <div>
+                            <label class="block text-xs font-bold text-gray-500 mb-1">요청 부서</label>
+                            <input type="text" id="work-report-dept" class="w-full bg-gray-50 border p-2.5 rounded-lg" placeholder="예: 연구기획">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-bold text-gray-500 mb-1">비고</label>
+                            <textarea id="work-report-note" class="w-full bg-gray-50 border p-2.5 rounded-lg min-h-[72px]" placeholder="상세 사유, 참고사항 등을 입력하세요."></textarea>
+                        </div>
+                    </div>
+                    <div class="flex justify-end gap-2">
+                        <button onclick="app.closeWorkReportModal()" class="bg-gray-100 px-5 py-2.5 rounded-lg font-bold">취소</button>
+                        <button onclick="app.submitWorkReport()" class="bg-slate-700 text-white px-5 py-2.5 rounded-lg font-bold shadow-lg">보고 저장</button>
+                    </div>
+                </div>
+            </div>
+            <div id="pw-modal" class="fixed inset-0 bg-black/60 backdrop-blur-sm hidden flex justify-center items-center z-50 fade-in"><div class="bg-white rounded-2xl p-6 w-full max-w-sm shadow-2xl"><h3 class="font-bold text-xl mb-6 border-b pb-2">비밀번호 변경</h3>
             <div class="flex items-center justify-end mb-2">
                 <label class="inline-flex items-center cursor-pointer">
                     <input type="checkbox" onchange="app.togglePwVisibility(this)" class="sr-only peer">
@@ -4158,20 +6565,82 @@
                 </label>
             </div>
             <div class="space-y-4 mb-6">
-                <div><label class="block text-xs font-bold text-gray-500 mb-1">새 비번</label><input type="password" id="pw-new" class="w-full bg-gray-50 border p-3 rounded-lg" placeholder="새 비밀번호 입력"></div>
-                <div><label class="block text-xs font-bold text-gray-500 mb-1">비번 확인</label><input type="password" id="pw-confirm" class="w-full bg-gray-50 border p-3 rounded-lg" placeholder="새 비밀번호 확인"></div>
+                <div><label class="block text-xs font-bold text-gray-500 mb-1">현재 비밀번호</label><input type="password" id="pw-current" class="w-full bg-gray-50 border p-3 rounded-lg" placeholder="현재 비밀번호 입력"></div>
+                <div><label class="block text-xs font-bold text-gray-500 mb-1">변경할 비밀번호</label><input type="password" id="pw-new" class="w-full bg-gray-50 border p-3 rounded-lg" placeholder="변경할 비밀번호 입력"></div>
+                <div><label class="block text-xs font-bold text-gray-500 mb-1">변경할 비밀번호 재확인</label><input type="password" id="pw-confirm" class="w-full bg-gray-50 border p-3 rounded-lg" placeholder="변경할 비밀번호 다시 입력"></div>
             </div>
-            <div class="flex justify-end gap-2"><button onclick="document.getElementById('pw-modal').classList.add('hidden')" class="bg-gray-100 px-5 py-2.5 rounded-lg font-bold">취소</button><button onclick="app.changePassword()" class="bg-indigo-600 text-white px-5 py-2.5 rounded-lg font-bold shadow-lg">변경</button></div></div></div><div id="member-card-modal" class="fixed inset-0 bg-black/60 backdrop-blur-sm hidden flex justify-center items-center z-50 fade-in"><div class="bg-white rounded-2xl p-6 w-full max-w-xl shadow-2xl"><div class="flex justify-between items-center mb-4 border-b pb-2"><h3 class="font-bold text-xl text-gray-800">직원 카드</h3><button onclick="app.closeMemberCard()" class="text-gray-400 hover:text-gray-600 text-xl leading-none">&times;</button></div><div id="member-card-body" class="min-h-[180px]"></div><div class="flex justify-end mt-5"><button onclick="app.closeMemberCard()" class="bg-indigo-600 text-white px-5 py-2.5 rounded-lg font-bold">닫기</button></div></div></div>`;
+            <div class="flex justify-end gap-2"><button onclick="document.getElementById('pw-modal').classList.add('hidden')" class="bg-gray-100 px-5 py-2.5 rounded-lg font-bold">취소</button><button onclick="app.changePassword()" class="bg-indigo-600 text-white px-5 py-2.5 rounded-lg font-bold shadow-lg">변경</button></div></div></div>
+            <div id="member-card-modal" class="fixed inset-0 bg-black/60 backdrop-blur-sm hidden flex justify-center items-center z-50 fade-in"><div class="bg-white rounded-2xl p-6 w-full max-w-xl shadow-2xl"><div class="flex justify-between items-center mb-4 border-b pb-2"><h3 class="font-bold text-xl text-gray-800">직원 카드</h3><button onclick="app.closeMemberCard()" class="text-gray-400 hover:text-gray-600 text-xl leading-none">&times;</button></div><div id="member-card-body" class="min-h-[180px]"></div><div class="flex justify-end mt-5"><button onclick="app.closeMemberCard()" class="bg-indigo-600 text-white px-5 py-2.5 rounded-lg font-bold">닫기</button></div></div></div>
+            <div id="report-board-modal" class="fixed inset-0 bg-black/60 backdrop-blur-sm hidden justify-center items-center z-50 fade-in" onclick="if(event.target===this) app.closeReportBoard()">
+                <div class="bg-white rounded-2xl p-6 w-full max-w-6xl max-h-[85vh] shadow-2xl overflow-hidden flex flex-col">
+                    <div class="flex justify-between items-center mb-4 border-b pb-2">
+                        <h3 class="font-bold text-xl text-gray-800">월별 잔업/특근 현황</h3>
+                        <button onclick="app.closeReportBoard()" class="text-gray-400 hover:text-gray-600 text-xl leading-none">&times;</button>
+                    </div>
+                    <div id="report-board-body" class="flex-1 overflow-auto"></div>
+                </div>
+            </div>
+            <div id="report-detail-modal" class="fixed inset-0 bg-black/60 backdrop-blur-sm hidden justify-center items-start z-50 fade-in overflow-y-auto py-6" onclick="if(event.target===this) app.closeReportDetail()">
+                <div class="bg-white rounded-2xl p-6 w-full max-w-[1280px] max-h-[88vh] shadow-2xl overflow-hidden flex flex-col">
+                    <div class="flex justify-between items-center mb-4 border-b pb-2">
+                        <h3 class="font-bold text-xl text-gray-800">보고 상세</h3>
+                        <button onclick="app.closeReportDetail()" class="text-gray-400 hover:text-gray-600 text-xl leading-none">&times;</button>
+                    </div>
+                    <div id="report-detail-body" class="min-h-[180px] flex-1 min-h-0 overflow-auto pr-1 custom-scrollbar"></div>
+                    <div class="flex justify-end mt-5 shrink-0">
+                        <button onclick="app.closeReportDetail()" class="bg-indigo-600 text-white px-5 py-2.5 rounded-lg font-bold">닫기</button>
+                    </div>
+                </div>
+            </div>
+            <div id="report-settlement-mail-modal" class="fixed inset-0 bg-black/60 backdrop-blur-sm hidden justify-center items-center z-50 fade-in" onclick="if(event.target===this) app.closeWorkReportSettlementDraftModal()">
+                <div class="bg-white rounded-2xl p-6 w-full max-w-4xl max-h-[88vh] shadow-2xl overflow-hidden flex flex-col">
+                    <div class="flex justify-between items-center mb-4 border-b pb-2">
+                        <h3 class="font-bold text-xl text-gray-800">정산 메일 초안</h3>
+                        <button onclick="app.closeWorkReportSettlementDraftModal()" class="text-gray-400 hover:text-gray-600 text-xl leading-none">&times;</button>
+                    </div>
+                    <div class="flex-1 overflow-auto space-y-4">
+                        <div class="grid grid-cols-1 gap-3">
+                            <div>
+                                <label class="block text-xs font-bold text-gray-500 mb-1">받는 사람</label>
+                                <input id="report-settlement-mail-to" class="w-full bg-gray-50 border p-2.5 rounded-lg" readonly>
+                            </div>
+                            <div>
+                                <label class="block text-xs font-bold text-gray-500 mb-1">참조</label>
+                                <input id="report-settlement-mail-cc" class="w-full bg-gray-50 border p-2.5 rounded-lg" readonly>
+                            </div>
+                            <div>
+                                <label class="block text-xs font-bold text-gray-500 mb-1">제목</label>
+                                <input id="report-settlement-mail-subject" class="w-full bg-gray-50 border p-2.5 rounded-lg" readonly>
+                            </div>
+                            <div>
+                                <label class="block text-xs font-bold text-gray-500 mb-1">본문</label>
+                                <textarea id="report-settlement-mail-body" class="w-full bg-gray-50 border p-3 rounded-lg min-h-[320px]" readonly></textarea>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="flex justify-end gap-2 mt-5">
+                        <button onclick="app.copyWorkReportSettlementDraft()" class="bg-gray-100 px-5 py-2.5 rounded-lg font-bold">본문 복사</button>
+                        <button onclick="app.openWorkReportSettlementMailApp()" class="bg-indigo-600 text-white px-5 py-2.5 rounded-lg font-bold">메일 앱 열기</button>
+                    </div>
+                </div>
+            </div>
+            <div id="mobile-calendar-detail-modal" class="fixed inset-0 bg-black/50 backdrop-blur-sm hidden z-50 items-end" onclick="if(event.target===this) app.closeMobileCalendarDayDetail()"><div class="w-full bg-white rounded-t-3xl shadow-2xl border border-gray-200 min-h-[42vh] max-h-[80vh] overflow-hidden flex flex-col"><div class="shrink-0 bg-white border-b border-gray-100 px-5 py-4 flex items-center justify-between"><div class="text-base font-bold text-gray-900">날짜 상세내역</div><button type="button" onclick="app.closeMobileCalendarDayDetail()" class="px-3 py-1.5 rounded-lg bg-gray-100 text-gray-600 font-bold">닫기</button></div><div id="mobile-calendar-detail-body" class="flex-1 overflow-y-auto overscroll-contain pb-8"></div></div></div>`;
         },
-        initModal: (presetDate = '') => {
-            app.editingId = null;
+        initModal: (presetDate = '', options = {}) => {
+            app.adminRequestMode = !!options.adminMode;
+            app.adminRequestEditMode = !!options.editMode;
+            if (app.adminRequestMode && options.targetUserId) {
+                app.adminOpsTargetUserId = security.cleanInlineValue(options.targetUserId);
+            }
+            app.editingId = security.cleanInlineValue(options.editId || '');
             const today = moment().format('YYYY-MM-DD');
             const defaultDate = security.normalizeDate(presetDate, today);
             const s = document.getElementById('req-start-date');
             const e = document.getElementById('req-end-date');
 
-            document.getElementById('req-modal-title').innerText = "연차 신청";
-            document.getElementById('req-modal-btn').innerText = "신청하기";
+            document.getElementById('req-modal-title').innerText = app.adminRequestEditMode ? "관리자 대리 수정" : (app.adminRequestMode ? "관리자 대리 등록" : "연차 신청");
+            document.getElementById('req-modal-btn').innerText = app.adminRequestEditMode ? "수정 완료" : (app.adminRequestMode ? "등록하기" : "신청하기");
+            app.syncRequestTargetField();
             app.refreshRequestTypeOptions('연차');
             document.getElementById('req-type').value = "연차";
             const specialMode = document.getElementById('req-special-mode');
@@ -4186,6 +6655,18 @@
 
             const multiToggle = document.getElementById('is-multi-day');
             if (multiToggle) multiToggle.checked = false;
+            const reportReason = document.getElementById('req-report-reason');
+            const reportDetail = document.getElementById('req-report-work-detail');
+            const reportDept = document.getElementById('req-report-dept');
+            const reportNote = document.getElementById('req-report-note');
+            const reportDuration = document.getElementById('req-report-duration');
+            const reportStart = document.getElementById('req-report-start-time');
+            if (reportReason) reportReason.value = '';
+            if (reportDetail) reportDetail.value = '';
+            if (reportDept) reportDept.value = '';
+            if (reportNote) reportNote.value = '';
+            if (reportDuration) reportDuration.value = '1';
+            if (reportStart) reportStart.value = '9';
 
             if (s && e) {
                 s.min = today;
@@ -4208,6 +6689,12 @@
         const selection = app.getCurrentRequestSelection();
         const isSpecialDayOnly = selection.isSpecial && selection.requestMode === 'day_only';
         const allowHolidayRequest = !!selection.allowHolidayRequest;
+        if (selection.baseType === '특근') {
+            statusEl.innerText = '✅ 특근 보고는 주말/공휴일에도 등록할 수 있습니다.';
+            statusEl.style.color = "#10b981";
+            toggleInputs();
+            return;
+        }
         if (isSpecialDayOnly || allowHolidayRequest) {
             const modeLabel = selection.dayCountMode === 'calendar_days' ? '달력일 기준' : '영업일 기준';
             statusEl.innerText = `✅ 특별휴가는 ${modeLabel}으로 차감되며 선택한 날짜 신청이 가능합니다.`;
@@ -4267,6 +6754,29 @@
         preview.style.color = '#047857';
     }
 
+    app.updateReportPreview = () => {
+        const preview = document.getElementById('req-report-preview');
+        const startEl = document.getElementById('req-report-start-time');
+        const durationEl = document.getElementById('req-report-duration');
+        const typeEl = document.getElementById('req-type');
+        if (!preview || !startEl || !durationEl || !typeEl) return;
+        const selectedType = security.normalizeType(typeEl.value || '잔업');
+        const startHour = parseInt(startEl.value, 10);
+        const duration = parseInt(durationEl.value, 10);
+        if (!Number.isFinite(startHour) || !Number.isFinite(duration)) {
+            preview.innerText = '';
+            return;
+        }
+        const endHour = startHour + duration;
+        if (endHour > 24) {
+            preview.innerText = '* 종료 시간이 24:00을 넘지 않게 설정해주세요.';
+            preview.style.color = '#dc2626';
+            return;
+        }
+        preview.innerText = `${selectedType} 시간: ${formatHour(startHour)} ~ ${formatHour(endHour)} (${duration}시간)`;
+        preview.style.color = selectedType === '특근' ? '#be123c' : '#334155';
+    };
+
     function toggleInputs() {
         const selection = app.getCurrentRequestSelection();
         const t = selection.baseType;
@@ -4274,8 +6784,20 @@
         const eDate = document.getElementById('req-end-date');
         const allowPast = document.getElementById('allow-past')?.checked || false;
         const isMultiDay = document.getElementById('is-multi-day');
+        const reasonWrap = document.getElementById('div-reason-select');
+        const reportWrap = document.getElementById('div-report');
+        const reportStartEl = document.getElementById('req-report-start-time');
+        const reportDeptEl = document.getElementById('req-report-dept');
+        const requestUser = app.getRequestModalTargetUser() || app.currentUser;
+        const reportType = ['잔업', '특근'].includes(t);
 
-        if (t === '연차') {
+        if (reportType) {
+            isMultiDay.checked = false;
+            isMultiDay.disabled = true;
+            isMultiDay.parentElement.style.opacity = '0.5';
+            eDate.style.display = 'none';
+            eDate.value = sDate.value;
+        } else if (t === '연차') {
             isMultiDay.disabled = false;
             isMultiDay.parentElement.style.opacity = '1';
             if (isMultiDay.checked) {
@@ -4296,15 +6818,41 @@
 
         document.getElementById('div-timeoff').style.display = t === '시간차(퇴근)' ? 'block' : 'none';
         document.getElementById('div-out').style.display = t === '시간차(외출)' ? 'block' : 'none';
+        if (reasonWrap) reasonWrap.style.display = reportType ? 'none' : 'block';
+        if (reportWrap) reportWrap.style.display = reportType ? 'block' : 'none';
+        if (reportType && reportStartEl) {
+            if (t === '잔업') {
+                const endHour = Number(app.getTimeoffEndHourForDate(requestUser, security.normalizeDate(sDate?.value, moment().format('YYYY-MM-DD'))));
+                reportStartEl.value = String(Number.isFinite(endHour) ? endHour : 18);
+                reportStartEl.disabled = true;
+                reportStartEl.classList.add('bg-gray-100', 'text-gray-500');
+            } else {
+                reportStartEl.disabled = false;
+                reportStartEl.classList.remove('bg-gray-100', 'text-gray-500');
+                if (!reportStartEl.value) reportStartEl.value = '9';
+            }
+        }
+        if (reportType && reportDeptEl && !reportDeptEl.value) {
+            reportDeptEl.value = security.cleanText((requestUser && requestUser.dept) || '');
+        }
         app.syncRequestTypeDefaults();
 
+        const titleEl = document.getElementById('req-modal-title');
+        const btnEl = document.getElementById('req-modal-btn');
+        if (titleEl && btnEl && !app.adminRequestMode && !app.adminRequestEditMode) {
+            if (t === '잔업') {
+                titleEl.innerText = '잔업 보고';
+                btnEl.innerText = '보고 저장';
+            } else if (t === '특근') {
+                titleEl.innerText = '특근 보고';
+                btnEl.innerText = '보고 저장';
+            } else {
+                titleEl.innerText = '연차 신청';
+                btnEl.innerText = '신청하기';
+            }
+        }
+
         if (t === '시간차(외출)') updateOutPreview();
+        if (reportType) app.updateReportPreview();
     }
     app.init();
-
-
-
-
-
-
-

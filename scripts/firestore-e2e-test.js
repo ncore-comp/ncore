@@ -104,6 +104,21 @@ async function loginAs(userId, password) {
   };
 }
 
+async function loginBootAs(userId, password) {
+  const response = await postJson({
+    action: "login_boot",
+    id: userId,
+    password
+  });
+  assert(response.json && response.json.result === "success", "login_boot failed", { userId, response });
+  return {
+    user: response.json.user || null,
+    sessionToken: rememberSessionToken(response.json.sessionToken),
+    data: response.json.data || {},
+    meta: response.json.meta || {}
+  };
+}
+
 function assert(condition, message, extra = {}) {
   if (!condition) {
     const error = new Error(message);
@@ -218,20 +233,17 @@ async function cleanup() {
 }
 
 async function main() {
-  const boot = await getJson({ action: "load", scope: "boot" });
-  const types = (((boot.json || {}).data || {}).specialLeaveTypes || []).map((item) => item.typeKey).filter(Boolean);
-
-  const masterLogin = await loginAs("0", "0");
+  const masterLogin = await loginBootAs("0", "0");
   state.masterSessionToken = masterLogin.sessionToken;
+  const types = ((masterLogin.data || {}).specialLeaveTypes || []).map((item) => item.typeKey).filter(Boolean);
 
   await runCheck("boot load", async () => {
-    assert(boot.ok, "boot load http failed", boot);
-    assert(boot.json && boot.json.result === "success", "boot load result failed", boot.json);
-    assert(Array.isArray(boot.json.data.users) && boot.json.data.users.length > 0, "boot load users missing", boot.json);
+    assert(masterLogin.sessionToken, "boot session token missing", masterLogin);
+    assert(Array.isArray((masterLogin.data || {}).users) && masterLogin.data.users.length > 0, "boot load users missing", masterLogin);
     return {
-      users: boot.json.data.users.length,
-      holidays: Object.keys(boot.json.data.holidays || {}).length,
-      specialLeaveTypes: (boot.json.data.specialLeaveTypes || []).length
+      users: masterLogin.data.users.length,
+      holidays: Object.keys(masterLogin.data.holidays || {}).length,
+      specialLeaveTypes: (masterLogin.data.specialLeaveTypes || []).length
     };
   });
 
@@ -374,7 +386,12 @@ async function main() {
 
   await runCheck("concurrent boot loads", async () => {
     const responses = await Promise.all(
-      Array.from({ length: 20 }, () => getJson({ action: "load", scope: "boot" }))
+      Array.from({ length: 20 }, () =>
+        postAuthed(state.masterSessionToken, {
+          action: "load_data",
+          scope: "boot"
+        })
+      )
     );
     const failed = responses.filter((item) => !item.ok || !item.json || item.json.result !== "success");
     assert(failed.length === 0, "concurrent boot load failures", { failed: failed.length });
@@ -547,7 +564,10 @@ async function main() {
     return { docId, typeKey };
   });
 
-  const fullLoad = await getJson({ action: "load", scope: "all" });
+  const fullLoad = await postAuthed(state.masterSessionToken, {
+    action: "load_data",
+    scope: "all"
+  });
   await runCheck("full load after writes", async () => {
     assert(fullLoad.ok, "full load http failed", fullLoad);
     assert(fullLoad.json && fullLoad.json.result === "success", "full load result failed", fullLoad.json);

@@ -1,0 +1,18 @@
+{
+  "projects": {
+    "default": "ncore-vacation-system"
+  },
+  "targets": {
+    "ncore-vacation-system": {
+      "hosting": {
+        "short": [
+          "ncore"
+        ],
+        "primary": [
+          "ncore-vacation-system"
+        ]
+      }
+    }
+  },
+  "etags": {}
+}

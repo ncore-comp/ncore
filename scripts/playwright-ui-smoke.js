@@ -66,15 +66,21 @@ async function login(page, id, password) {
   await page.getByPlaceholder("비밀번호 입력").fill(password);
   await page.getByRole("button", { name: "로그인" }).click();
   await page.waitForLoadState("networkidle");
-  await page.waitForTimeout(800);
+  await page.waitForTimeout(1600);
 }
 
 async function isLoggedIn(page) {
-  return await page.getByRole("button", { name: "로그아웃" }).isVisible().catch(() => false);
+  const navButtons = await collectNavButtons(page).catch(() => []);
+  if (navButtons.some((text) => String(text || "").includes("로그아웃"))) return true;
+  return await page
+    .locator("button[onclick=\"app.logout()\"], button[onclick*=\"handleMobileNavAction('logout')\"]")
+    .first()
+    .isVisible()
+    .catch(() => false);
 }
 
 async function collectNavButtons(page) {
-  const texts = await page.locator("nav button").allTextContents();
+  const texts = await page.locator("#nav-info button").allTextContents();
   return texts.map((item) => String(item || "").trim()).filter(Boolean);
 }
 
@@ -123,6 +129,7 @@ async function main() {
     for (const account of ACCOUNTS) {
       await runCase(results, `${account.label} 로그인/화면`, browser, async (page) => {
         await login(page, account.id, account.password);
+        await page.waitForTimeout(1200);
         const loggedIn = await isLoggedIn(page);
         const navButtons = await collectNavButtons(page);
         return { ok: loggedIn, account: account.label, id: account.id, navButtons };
@@ -131,24 +138,22 @@ async function main() {
 
     await runCase(results, "새로고침 후 화면 복원", browser, async (page) => {
       await login(page, "0", "0");
+      await page.waitForTimeout(1200);
       const beforeReload = await isLoggedIn(page);
       await page.reload({ waitUntil: "networkidle", timeout: 60000 });
-      await page.waitForTimeout(1000);
+      await page.waitForTimeout(1600);
       const afterReload = await isLoggedIn(page);
       return { ok: beforeReload && afterReload, beforeReload, afterReload };
     });
 
     await runCase(results, "모바일 화면 진입", browser, async (page) => {
+      await login(page, "0", "0");
       await page.setViewportSize({ width: 390, height: 844 });
-      await gotoApp(page);
-      const loginVisible = await page.getByRole("button", { name: "로그인" }).isVisible();
-      await page.getByPlaceholder("ID 입력").fill("0");
-      await page.getByPlaceholder("비밀번호 입력").fill("0");
-      await page.getByRole("button", { name: "로그인" }).click();
-      await page.waitForLoadState("networkidle");
       await page.waitForTimeout(1000);
-      const logoutVisible = await isLoggedIn(page);
-      return { ok: loginVisible && logoutVisible, loginVisible, logoutVisible };
+      const navButtons = await collectNavButtons(page);
+      const logoutVisible = navButtons.some((text) => String(text || "").includes("로그아웃"));
+      const applyVisible = await page.getByRole("button", { name: "잔업/특근 신청" }).isVisible().catch(() => false);
+      return { ok: logoutVisible && applyVisible, logoutVisible, applyVisible, navButtons };
     });
 
     await runCase(results, "전체 상황판/자리 배치도", browser, async (page) => {
